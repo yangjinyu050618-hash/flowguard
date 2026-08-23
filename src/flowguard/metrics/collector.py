@@ -1,15 +1,16 @@
 """Thread-safe latency and throughput telemetry metrics collector."""
 
+import collections
 import threading
-import time
 from typing import Any, Dict, List
 
 
 class MetricsCollector:
-    """Collects execution telemetry (successes, failures, rejections, latencies)."""
+    """Collects execution telemetry (successes, failures, rejections, latencies, failure types)."""
 
-    def __init__(self, name: str = "default") -> None:
+    def __init__(self, name: str = "default", max_failure_types: int = 50) -> None:
         self.name = name
+        self.max_failure_types = max_failure_types
         self.total_requests = 0
         self.success_count = 0
         self.failure_count = 0
@@ -18,6 +19,7 @@ class MetricsCollector:
             "circuit_breaker": 0,
             "bulkhead": 0,
         }
+        self.failure_by_type: Dict[str, int] = collections.defaultdict(int)
         self.latencies: List[float] = []
         self._lock = threading.Lock()
 
@@ -36,6 +38,11 @@ class MetricsCollector:
             self.latencies.append(latency)
             if len(self.latencies) > 10000:
                 self.latencies = self.latencies[-5000:]
+
+            if len(self.failure_by_type) >= self.max_failure_types and error_type not in self.failure_by_type:
+                self.failure_by_type["other"] += 1
+            else:
+                self.failure_by_type[error_type] += 1
 
     def record_rejected(self, reason: str) -> None:
         with self._lock:
@@ -58,6 +65,7 @@ class MetricsCollector:
                 "success_count": self.success_count,
                 "failure_count": self.failure_count,
                 "rejected_count": dict(self.rejected_count),
+                "failure_by_type": dict(self.failure_by_type),
                 "latency_avg_ms": round(avg * 1000, 2),
                 "latency_p50_ms": round(p50 * 1000, 2),
                 "latency_p95_ms": round(p95 * 1000, 2),
@@ -71,4 +79,5 @@ class MetricsCollector:
             self.failure_count = 0
             for k in self.rejected_count:
                 self.rejected_count[k] = 0
+            self.failure_by_type.clear()
             self.latencies.clear()

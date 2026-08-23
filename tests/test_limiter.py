@@ -24,6 +24,13 @@ async def test_token_bucket_timeout():
 
 
 @pytest.mark.asyncio
+async def test_token_bucket_exceed_capacity():
+    limiter = TokenBucketLimiter(rate=10.0, capacity=5.0)
+    with pytest.raises(ValueError):
+        await limiter.acquire(tokens=10.0)
+
+
+@pytest.mark.asyncio
 async def test_sliding_window_limiter():
     limiter = SlidingWindowLimiter(max_requests=2, window_seconds=0.2)
     assert limiter.try_acquire() is True
@@ -32,3 +39,10 @@ async def test_sliding_window_limiter():
 
     await asyncio.sleep(0.25)
     assert limiter.try_acquire() is True
+
+
+@pytest.mark.asyncio
+async def test_sliding_window_exceed_max_requests():
+    limiter = SlidingWindowLimiter(max_requests=3, window_seconds=1.0)
+    with pytest.raises(ValueError):
+        await limiter.acquire(tokens=5)

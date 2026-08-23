@@ -2,9 +2,8 @@
 
 import argparse
 import asyncio
-import sys
 import time
-from flowguard import __version__, TokenBucketLimiter, FlowGuard, guard
+from flowguard import __version__, TokenBucketLimiter, FlowGuard
 
 
 async def run_benchmark(concurrency: int = 10, total_requests: int = 50, rate_per_sec: float = 20.0) -> None:

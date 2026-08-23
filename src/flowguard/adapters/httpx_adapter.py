@@ -1,6 +1,6 @@
 """HTTPX asynchronous client resilience adapter."""
 
-from typing import Any, Optional
+from typing import Any
 from flowguard.core.pipeline import FlowGuard
 
 

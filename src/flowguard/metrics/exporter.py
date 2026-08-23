@@ -1,7 +1,6 @@
 """Prometheus and JSON metrics exporter."""
 
 import json
-from typing import Dict
 from flowguard.metrics.collector import MetricsCollector
 
 
@@ -15,8 +14,8 @@ def export_prometheus(collector: MetricsCollector) -> str:
     summary = collector.get_summary()
     name = summary["name"]
     lines = [
-        f"# HELP flowguard_requests_total Total number of processed requests",
-        f"# TYPE flowguard_requests_total counter",
+        "# HELP flowguard_requests_total Total number of processed requests",
+        "# TYPE flowguard_requests_total counter",
         f'flowguard_requests_total{{pipeline="{name}"}} {summary["total_requests"]}',
         f'flowguard_requests_success_total{{pipeline="{name}"}} {summary["success_count"]}',
         f'flowguard_requests_failure_total{{pipeline="{name}"}} {summary["failure_count"]}',
@@ -26,4 +25,8 @@ def export_prometheus(collector: MetricsCollector) -> str:
     ]
     for reason, count in summary["rejected_count"].items():
         lines.append(f'flowguard_rejected_total{{pipeline="{name}",reason="{reason}"}} {count}')
+
+    for error_type, count in summary.get("failure_by_type", {}).items():
+        lines.append(f'flowguard_failures_by_type_total{{pipeline="{name}",error_type="{error_type}"}} {count}')
+
     return "\n".join(lines) + "\n"

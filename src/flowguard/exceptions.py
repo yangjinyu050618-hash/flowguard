@@ -17,7 +17,7 @@ class RateLimitExceededError(FlowGuardError):
 
 
 class CircuitBreakerOpenError(FlowGuardError):
-    """Raised when a request is attempted while the circuit breaker is in OPEN state."""
+    """Raised when a request is attempted while the circuit breaker is in OPEN or saturated HALF_OPEN state."""
 
     def __init__(self, message: str = "Circuit breaker is OPEN; requests are rejected", reset_timeout: Optional[float] = None) -> None:
         super().__init__(message)

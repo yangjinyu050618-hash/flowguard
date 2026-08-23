@@ -1,7 +1,5 @@
-import asyncio
 import pytest
-from flowguard.core.pipeline import guard, FlowGuard
-from flowguard.core.limiter import TokenBucketLimiter
+from flowguard.core.pipeline import guard
 
 
 @pytest.mark.asyncio

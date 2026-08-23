@@ -1,4 +1,4 @@
-"""FlowGuard: Composable Resilience Pipeline (Limiter + Breaker + Retry + Bulkhead)."""
+"""FlowGuard: Composable Resilience Pipeline (Retry -> Limiter -> Bulkhead -> Breaker -> Call)."""
 
 import functools
 import inspect
@@ -6,8 +6,9 @@ import time
 from typing import Any, Callable, Coroutine, Optional, TypeVar, cast
 from flowguard.core.limiter import BaseRateLimiter, TokenBucketLimiter
 from flowguard.core.circuit_breaker import CircuitBreaker
-from flowguard.core.retry import RetryPolicy, ExponentialBackoff
+from flowguard.core.retry import RetryPolicy
 from flowguard.core.bulkhead import Bulkhead
+from flowguard.exceptions import CircuitBreakerOpenError, BulkheadFullError
 from flowguard.metrics.collector import MetricsCollector
 
 F = TypeVar("F", bound=Callable[..., Any])
@@ -15,22 +16,10 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 class FlowGuard:
     """
-    Unified Orchestrator combining Rate Limiting, Circuit Breaking, Retry, and Concurrency Bulkhead.
+    Unified Orchestrator combining Retry, Rate Limiting, Bulkhead Concurrency, and Circuit Breaking.
 
-    Parameters
-    ----------
-    name : str
-        Identifier for this pipeline.
-    limiter : Optional[BaseRateLimiter]
-        Rate limiter instance.
-    circuit_breaker : Optional[CircuitBreaker]
-        Circuit breaker instance.
-    retry : Optional[RetryPolicy]
-        Retry policy instance.
-    bulkhead : Optional[Bulkhead]
-        Bulkhead concurrency barrier instance.
-    metrics : Optional[MetricsCollector]
-        Metrics collector for telemetry.
+    Architecture Hierarchy:
+    Retry (outer) -> RateLimiter -> Bulkhead -> CircuitBreaker -> Target Downstream
     """
 
     def __init__(
@@ -50,22 +39,36 @@ class FlowGuard:
         self.metrics = metrics or MetricsCollector(name=name)
 
     async def execute(self, func: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any) -> Any:
-        start_time = time.monotonic()
         tokens = kwargs.pop("__flowguard_tokens__", 1.0)
 
-        # 1. Rate Limiting
-        if self.limiter:
-            try:
-                await self.limiter.acquire(tokens=tokens)
-            except Exception as e:
-                self.metrics.record_rejected("rate_limit")
-                raise e
+        async def _attempt() -> Any:
+            # 1. Rate Limiting per physical attempt
+            if self.limiter:
+                try:
+                    await self.limiter.acquire(tokens=tokens)
+                except Exception as e:
+                    self.metrics.record_rejected("rate_limit")
+                    raise e
 
-        # 2. Bulkhead execution wrapper
-        async def _core_call() -> Any:
+            # 2. Bulkhead concurrency isolation
+            if self.bulkhead:
+                try:
+                    async with self.bulkhead:
+                        return await _circuit_and_call()
+                except BulkheadFullError as e:
+                    self.metrics.record_rejected("bulkhead")
+                    raise e
+            else:
+                return await _circuit_and_call()
+
+        async def _circuit_and_call() -> Any:
             # 3. Circuit breaker check
             if self.circuit_breaker:
-                await self.circuit_breaker.before_call()
+                try:
+                    await self.circuit_breaker.before_call()
+                except CircuitBreakerOpenError as e:
+                    self.metrics.record_rejected("circuit_breaker")
+                    raise e
 
             call_start = time.monotonic()
             try:
@@ -82,16 +85,10 @@ class FlowGuard:
                 self.metrics.record_failure(latency, type(exc).__name__)
                 raise exc
 
-        async def _bulkhead_wrapped() -> Any:
-            if self.bulkhead:
-                async with self.bulkhead:
-                    return await _core_call()
-            return await _core_call()
-
-        # 4. Retry layer
+        # 4. Outer retry loop
         if self.retry:
-            return await self.retry.execute(_bulkhead_wrapped)
-        return await _bulkhead_wrapped()
+            return await self.retry.execute(_attempt)
+        return await _attempt()
 
     def __call__(self, func: F) -> F:
         """Decorator interface for protecting async functions."""
@@ -109,7 +106,8 @@ def guard(
     name: str = "default",
     rate_per_sec: Optional[float] = None,
     burst_capacity: Optional[float] = None,
-    max_retries: int = 1,
+    max_retries: int = 0,
+    max_attempts: Optional[int] = None,
     failure_threshold: int = 5,
     recovery_timeout: float = 30.0,
     max_concurrent: Optional[int] = None,
@@ -125,9 +123,11 @@ def guard(
     if failure_threshold > 0:
         circuit_breaker = CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout)
 
+    # Resolve attempts
+    attempts = max_attempts if max_attempts is not None else (max_retries + 1 if max_retries > 0 else 1)
     retry_policy = None
-    if max_retries > 1:
-        retry_policy = RetryPolicy(max_attempts=max_retries)
+    if attempts > 1:
+        retry_policy = RetryPolicy(max_attempts=attempts)
 
     bulkhead = None
     if max_concurrent is not None and max_concurrent > 0:

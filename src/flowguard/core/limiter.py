@@ -2,8 +2,9 @@
 
 import abc
 import asyncio
+import collections
 import time
-from typing import Optional
+from typing import Deque, Optional
 from flowguard.exceptions import RateLimitExceededError
 
 
@@ -21,7 +22,7 @@ class BaseRateLimiter(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def reset(self) -> None:
+    async def reset(self) -> None:
         """Reset limiter internal state."""
         pass
 
@@ -54,6 +55,8 @@ class TokenBucketLimiter(BaseRateLimiter):
         self.rate = float(rate)
         self.capacity = float(capacity)
         self.tokens = float(initial_tokens) if initial_tokens is not None else float(capacity)
+        if self.tokens > self.capacity:
+            self.tokens = self.capacity
         self.last_refill = time.monotonic()
         self._lock = asyncio.Lock()
 
@@ -64,6 +67,11 @@ class TokenBucketLimiter(BaseRateLimiter):
             self.last_refill = now
 
     def try_acquire(self, tokens: float = 1.0) -> bool:
+        if tokens <= 0:
+            raise ValueError(f"Requested tokens must be positive, got {tokens}")
+        if tokens > self.capacity:
+            return False
+
         now = time.monotonic()
         self._refill(now)
         if self.tokens >= tokens:
@@ -72,6 +80,13 @@ class TokenBucketLimiter(BaseRateLimiter):
         return False
 
     async def acquire(self, tokens: float = 1.0, timeout: Optional[float] = None) -> bool:
+        if tokens <= 0:
+            raise ValueError(f"Requested tokens must be positive, got {tokens}")
+        if tokens > self.capacity:
+            raise ValueError(
+                f"Requested tokens ({tokens}) exceeds bucket capacity ({self.capacity})"
+            )
+
         start_time = time.monotonic()
         while True:
             async with self._lock:
@@ -86,27 +101,35 @@ class TokenBucketLimiter(BaseRateLimiter):
 
             if timeout is not None:
                 elapsed = time.monotonic() - start_time
-                if elapsed + wait_time > timeout:
+                remaining = timeout - elapsed
+                if wait_time > remaining:
+                    await asyncio.sleep(max(0.0, remaining))
                     raise RateLimitExceededError(
                         f"Failed to acquire {tokens} tokens within timeout of {timeout}s",
                         retry_after=wait_time,
                     )
+                sleep_duration = min(wait_time, remaining)
+            else:
+                sleep_duration = wait_time
 
-            await asyncio.sleep(min(wait_time, 0.05))
+            await asyncio.sleep(sleep_duration)
 
-    def reset(self) -> None:
-        self.tokens = self.capacity
-        self.last_refill = time.monotonic()
+    async def reset(self) -> None:
+        async with self._lock:
+            self.tokens = self.capacity
+            self.last_refill = time.monotonic()
 
     @property
     def current_tokens(self) -> float:
-        self._refill(time.monotonic())
-        return self.tokens
+        """Read-only view of estimated available tokens without modifying state."""
+        now = time.monotonic()
+        elapsed = max(0.0, now - self.last_refill)
+        return min(self.capacity, self.tokens + elapsed * self.rate)
 
 
 class SlidingWindowLimiter(BaseRateLimiter):
     """
-    Sliding window log rate limiter for strict time-interval quotas (e.g. max 100 requests per 60s).
+    Sliding window log rate limiter for strict time-interval quotas.
 
     Parameters
     ----------
@@ -121,16 +144,21 @@ class SlidingWindowLimiter(BaseRateLimiter):
             raise ValueError("max_requests and window_seconds must be positive numbers.")
         self.max_requests = max_requests
         self.window_seconds = float(window_seconds)
-        self._timestamps: list[float] = []
+        self._timestamps: Deque[float] = collections.deque()
         self._lock = asyncio.Lock()
 
     def _prune(self, now: float) -> None:
         threshold = now - self.window_seconds
         while self._timestamps and self._timestamps[0] <= threshold:
-            self._timestamps.pop(0)
+            self._timestamps.popleft()
 
     def try_acquire(self, tokens: float = 1.0) -> bool:
         int_tokens = int(tokens)
+        if int_tokens <= 0:
+            raise ValueError(f"Requested tokens must be positive, got {tokens}")
+        if int_tokens > self.max_requests:
+            return False
+
         now = time.monotonic()
         self._prune(now)
         if len(self._timestamps) + int_tokens <= self.max_requests:
@@ -141,8 +169,14 @@ class SlidingWindowLimiter(BaseRateLimiter):
 
     async def acquire(self, tokens: float = 1.0, timeout: Optional[float] = None) -> bool:
         int_tokens = int(tokens)
-        start = time.monotonic()
+        if int_tokens <= 0:
+            raise ValueError(f"Requested tokens must be positive, got {tokens}")
+        if int_tokens > self.max_requests:
+            raise ValueError(
+                f"Requested tokens ({int_tokens}) exceeds maximum window capacity ({self.max_requests})"
+            )
 
+        start = time.monotonic()
         while True:
             async with self._lock:
                 now = time.monotonic()
@@ -152,18 +186,27 @@ class SlidingWindowLimiter(BaseRateLimiter):
                         self._timestamps.append(now)
                     return True
 
-                oldest = self._timestamps[0]
-                wait_time = max(0.001, (oldest + self.window_seconds) - now)
+                if self._timestamps:
+                    oldest = self._timestamps[0]
+                    wait_time = max(0.001, (oldest + self.window_seconds) - now)
+                else:
+                    wait_time = 0.001
 
             if timeout is not None:
                 elapsed = time.monotonic() - start
-                if elapsed + wait_time > timeout:
+                remaining = timeout - elapsed
+                if wait_time > remaining:
+                    await asyncio.sleep(max(0.0, remaining))
                     raise RateLimitExceededError(
                         f"Sliding window rate limit exceeded ({self.max_requests} reqs/{self.window_seconds}s)",
                         retry_after=wait_time,
                     )
+                sleep_duration = min(wait_time, remaining)
+            else:
+                sleep_duration = wait_time
 
-            await asyncio.sleep(min(wait_time, 0.05))
+            await asyncio.sleep(sleep_duration)
 
-    def reset(self) -> None:
-        self._timestamps.clear()
+    async def reset(self) -> None:
+        async with self._lock:
+            self._timestamps.clear()

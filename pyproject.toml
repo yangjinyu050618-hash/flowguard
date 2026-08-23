@@ -4,11 +4,11 @@ build-backend = "hatchling.build"
 
 [project]
 name = "flowguard-core"
-version = "0.2.1"
+version = "0.2.2"
 description = "High-performance Async Rate Limiting, Circuit Breaking & Resilience Orchestration for LLM & API Pipelines"
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "MIT" }
+license = "MIT"
 authors = [
     { name = "yangjinyu050618-hash", email = "yangjinyu050618@gmail.com" }
 ]
@@ -39,14 +39,11 @@ classifiers = [
     "Topic :: System :: Networking",
     "Typing :: Typed",
 ]
-dependencies = [
-    "typing-extensions>=4.5.0",
-]
+dependencies = []
 
 [project.optional-dependencies]
 all = [
     "httpx>=0.24.0",
-    "prometheus-client>=0.17.0",
 ]
 dev = [
     "pytest>=7.4.0",
@@ -79,7 +76,7 @@ line-length = 100
 target-version = "py39"
 
 [tool.mypy]
-python_version = "3.9"
+python_version = "3.10"
 strict = true
 warn_return_any = true
 warn_unused_configs = true

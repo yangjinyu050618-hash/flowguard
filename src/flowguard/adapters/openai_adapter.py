@@ -18,6 +18,8 @@ class ResilientOpenAI:
         Requests Per Minute limit (e.g. 500 RPM).
     tpm_limit : Optional[float]
         Tokens Per Minute limit (e.g. 100,000 TPM).
+    tpm_burst_capacity : Optional[float]
+        Explicit token bucket burst capacity (default: max(tpm_limit / 5.0, 2000.0)).
     max_retries : int
         Max auto-retries on transient errors.
     acquire_timeout : Optional[float]
@@ -29,6 +31,7 @@ class ResilientOpenAI:
         client: Any,
         rpm_limit: float = 500.0,
         tpm_limit: Optional[float] = None,
+        tpm_burst_capacity: Optional[float] = None,
         max_retries: int = 4,
         acquire_timeout: Optional[float] = 60.0,
     ) -> None:
@@ -38,12 +41,15 @@ class ResilientOpenAI:
             rate=rpm_limit / 60.0,
             capacity=max(10.0, rpm_limit / 10.0),
         )
-        # For TPM, ensure bucket capacity can hold at least full 1-minute quota or large context requests
-        self.tpm_limiter = (
-            TokenBucketLimiter(rate=tpm_limit / 60.0, capacity=max(float(tpm_limit), 100_000.0))
-            if tpm_limit
-            else None
-        )
+        if tpm_limit:
+            # Proportional burst capacity tied to user's quota (12s of quota or user specified)
+            burst = tpm_burst_capacity or max(float(tpm_limit) / 5.0, 2000.0)
+            self.tpm_limiter: Optional[TokenBucketLimiter] = TokenBucketLimiter(
+                rate=float(tpm_limit) / 60.0,
+                capacity=burst,
+            )
+        else:
+            self.tpm_limiter = None
 
         self.retry_policy = RetryPolicy(
             max_attempts=max_retries,

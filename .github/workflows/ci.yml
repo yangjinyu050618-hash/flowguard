@@ -6,15 +6,44 @@ on:
   pull_request:
     branches: [ main ]
 
+permissions:
+  contents: read
+
 jobs:
+  lint-and-typecheck:
+    name: Code Quality & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Linting & Typing Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff mypy hatchling
+          pip install -e .
+
+      - name: Run Ruff Lint
+        run: |
+          ruff check src tests
+
+      - name: Run Mypy Strict Type Check
+        run: |
+          mypy src/flowguard
+
   test:
     name: Test Python ${{ matrix.python-version }} on ${{ matrix.os }}
+    needs: [lint-and-typecheck]
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        python-version: ["3.10", "3.11", "3.12"]
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@v4
@@ -27,9 +56,9 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install hatchling pytest pytest-asyncio
+          pip install hatchling pytest pytest-asyncio pytest-cov
           pip install -e .
 
-      - name: Run Tests
+      - name: Run Tests with Coverage
         run: |
-          pytest -v
+          pytest --cov=flowguard --cov-fail-under=80 -v

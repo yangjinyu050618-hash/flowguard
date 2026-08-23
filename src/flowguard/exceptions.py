@@ -4,51 +4,59 @@ from typing import Optional
 
 
 class FlowGuardError(Exception):
-    """Base exception class for all FlowGuard errors."""
+    """Base exception for all FlowGuard internal framework errors."""
 
     pass
 
 
 class RateLimitExceededError(FlowGuardError):
-    """Raised when rate limit quota is exhausted and non-blocking or timeout exceeded."""
+    """Raised when token quota cannot be acquired within the timeout window."""
 
-    def __init__(
-        self, message: str = "Rate limit quota exceeded", retry_after: Optional[float] = None
-    ) -> None:
+    def __init__(self, message: str, retry_after: Optional[float] = None) -> None:
         super().__init__(message)
         self.retry_after = retry_after
 
 
 class CircuitBreakerOpenError(FlowGuardError):
-    """Raised when a request is attempted while the circuit breaker is in OPEN or saturated HALF_OPEN state."""
+    """Raised when an operation is blocked because the circuit breaker is OPEN or probe limits reached."""
 
-    def __init__(
-        self,
-        message: str = "Circuit breaker is OPEN; requests are rejected",
-        reset_timeout: Optional[float] = None,
-    ) -> None:
+    def __init__(self, message: str, reset_timeout: Optional[float] = None) -> None:
         super().__init__(message)
         self.reset_timeout = reset_timeout
 
 
 class BulkheadFullError(FlowGuardError):
-    """Raised when concurrent execution slots and queue capacity are exhausted."""
+    """Raised when concurrent executions or queued capacity exceed configured bulkhead limits."""
 
-    def __init__(
-        self, message: str = "Bulkhead execution slots and queue capacity saturated"
-    ) -> None:
-        super().__init__(message)
+    pass
 
 
 class MaxRetriesExceededError(FlowGuardError):
-    """Raised when an operation has failed and exceeded configured max retry attempts."""
+    """Raised when retry attempts are exhausted without successful resolution."""
 
     def __init__(
-        self,
-        message: str = "Maximum retry attempts exhausted",
-        attempts: int = 0,
-        last_exception: Optional[BaseException] = None,
+        self, message: str, attempts: int, last_exception: Optional[BaseException] = None
     ) -> None:
         super().__init__(message)
         self.attempts = attempts
         self.last_exception = last_exception
+
+
+class HTTPStatusError(Exception):
+    """Base exception for downstream HTTP response errors."""
+
+    def __init__(self, status_code: int, message: str = "") -> None:
+        super().__init__(f"HTTP {status_code}: {message}")
+        self.status_code = status_code
+
+
+class TransientHTTPError(HTTPStatusError):
+    """Raised on transient HTTP errors (e.g. 429 Too Many Requests, 502, 503, 504) suitable for retrying."""
+
+    pass
+
+
+class PermanentHTTPError(HTTPStatusError):
+    """Raised on permanent client/auth HTTP errors (e.g. 400, 401, 403, 404, 422) that should not be retried."""
+
+    pass

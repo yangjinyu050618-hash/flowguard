@@ -156,6 +156,12 @@ class CircuitBreaker:
                     )
                     self._set_state(CircuitState.OPEN)
 
+    async def record_cancelled(self) -> None:
+        """Release allocated probe in-flight slot when probe execution is cancelled."""
+        async with self._lock:
+            if self._state == CircuitState.HALF_OPEN:
+                self._half_open_inflight = max(0, self._half_open_inflight - 1)
+
     async def reset(self) -> None:
         async with self._lock:
             self.failure_count = 0

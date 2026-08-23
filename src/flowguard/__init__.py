@@ -1,5 +1,5 @@
 """
-FlowGuard: High-performance Async Rate Limiting, Circuit Breaking & Resilience Orchestration for LLM & API Pipelines.
+FlowGuard: High-Performance Async Rate Limiting, Circuit Breaking & Resilience Orchestration for LLM & API Pipelines.
 """
 
 from flowguard.exceptions import (
@@ -8,6 +8,9 @@ from flowguard.exceptions import (
     CircuitBreakerOpenError,
     BulkheadFullError,
     MaxRetriesExceededError,
+    HTTPStatusError,
+    TransientHTTPError,
+    PermanentHTTPError,
 )
 from flowguard.core.limiter import (
     BaseRateLimiter,
@@ -34,7 +37,7 @@ from flowguard.metrics.collector import (
     MetricsCollector,
 )
 
-__version__ = "0.2.1"
+__version__ = "0.2.2"
 __all__ = [
     "__version__",
     "FlowGuardError",
@@ -42,6 +45,9 @@ __all__ = [
     "CircuitBreakerOpenError",
     "BulkheadFullError",
     "MaxRetriesExceededError",
+    "HTTPStatusError",
+    "TransientHTTPError",
+    "PermanentHTTPError",
     "BaseRateLimiter",
     "TokenBucketLimiter",
     "SlidingWindowLimiter",

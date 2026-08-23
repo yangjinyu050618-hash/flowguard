@@ -11,7 +11,7 @@
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type_checked-mypy-blue.svg)](https://github.com/python/mypy)
 
-[Features](#-key-features) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [Adapters](#-ecosystem-adapters) • [Telemetry](#-telemetry--metrics) • [Contributing](#-contributing)
+[Features](#-key-features) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [Adapters](#-ecosystem-adapters) • [Telemetry](#-telemetry--metrics) • [Examples](#-runnable-examples)
 
 </div>
 
@@ -19,7 +19,7 @@
 
 ## 📖 Overview
 
-**FlowGuard** (`flowguard-core`) is a zero-overhead, production-grade Python async resilience framework tailored for modern AI workloads, high-concurrency Microservices, and LLM API orchestrations (e.g. OpenAI, Anthropic, Gemini, DeepSeek).
+**FlowGuard** (`flowguard-core`) is a lightweight, asynchronous Python resilience framework tailored for modern AI workloads, high-concurrency Microservices, and LLM API orchestrations (e.g. OpenAI, Anthropic, Gemini, DeepSeek).
 
 When dealing with third-party LLM providers, rate limits (RPM / TPM), transient server hiccups (HTTP 429 / 503), and unpredictable downstream latency often degrade application availability. FlowGuard combines **strict FIFO token-bucket rate limiting**, **gated circuit breaking**, **jittered exponential backoff**, and **bulkhead resource partitioning** into a single composable pipeline.
 
@@ -27,12 +27,12 @@ When dealing with third-party LLM providers, rate limits (RPM / TPM), transient 
 
 ## ✨ Key Features
 
-- ⚡ **Strict FIFO Token-Bucket & Sliding-Window Limiters**: Exact Future-based FIFO queuing guaranteeing zero starvation and zero polling overhead.
-- 🔌 **Probe-Gated Circuit Breaker**: State-machine driven (`CLOSED` → `OPEN` → `HALF_OPEN`) with explicit probe concurrency limits preventing half-open stampedes.
+- ⚡ **Strict FIFO Token-Bucket & Sliding-Window Limiters**: Exact Future-based FIFO queuing guaranteeing zero starvation and eliminating busy-polling.
+- 🔌 **Probe-Gated Circuit Breaker**: State-machine driven (`CLOSED` → `OPEN` → `HALF_OPEN`) with explicit probe concurrency limits preventing half-open stampedes and safe cancellation slot cleanup.
 - 🔁 **Smart Exponential Backoff & Jitter**: Full Jitter, Equal Jitter, and Decorrelated Jitter algorithms preventing thundering herds.
 - 🧱 **Bulkhead Isolation**: Asynchronous concurrency gates preventing cascaded resource exhaustion.
-- 🤖 **LLM Native Adapters**: RPM & TPM rate limiting with timeout guards for OpenAI and HTTPX clients.
-- 📊 **Telemetry & Exporters**: P50/P95/P99 latency histogram tracker with Prometheus text format & JSON export.
+- 🤖 **LLM Native Adapters**: RPM & TPM rate limiting with per-attempt token reservation and HTTP error classification for OpenAI and HTTPX clients.
+- 📊 **Telemetry & Exporters**: P50/P95/P99 latency histogram tracker with Prometheus text format & JSON export with sanitized label escaping.
 - 🪶 **True Zero Dependencies**: Pure Python asyncio standard library core (`PEP 561` typed).
 
 ---
@@ -131,7 +131,7 @@ async def run_chat():
         model="gpt-4o",
         messages=[{"role": "user", "content": "Explain quantum computing in 3 sentences."}]
     )
-    print(response.choices[0].message.content)
+    print(response["choices"][0]["message"]["content"])
 ```
 
 ---

@@ -1,5 +1,6 @@
 """FlowGuard: Composable Resilience Pipeline (Retry -> Limiter -> Bulkhead -> Breaker -> Call)."""
 
+import asyncio
 import functools
 import inspect
 import logging
@@ -86,6 +87,10 @@ class FlowGuard:
                 latency = time.monotonic() - call_start
                 self.metrics.record_success(latency)
                 return res
+            except asyncio.CancelledError:
+                if self.circuit_breaker:
+                    await self.circuit_breaker.record_cancelled()
+                raise
             except Exception as exc:
                 if self.circuit_breaker:
                     await self.circuit_breaker.record_failure(exc)

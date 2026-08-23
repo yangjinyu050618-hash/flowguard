@@ -1,4 +1,4 @@
-"""Sliding-window Circuit Breaker with Half-Open probe state machine."""
+"""Sliding-window Circuit Breaker with Half-Open probe state machine and structured logging."""
 
 import asyncio
 import enum
@@ -79,11 +79,12 @@ class CircuitBreaker:
         if self._state != new_state:
             old_state = self._state
             self._state = new_state
+            logger.info("Circuit breaker state transition: %s -> %s", old_state.value, new_state.value)
             if self.on_state_change:
                 try:
                     self.on_state_change(old_state, new_state)
                 except Exception:
-                    logger.exception("Exception raised in on_state_change callback")
+                    logger.exception("Exception in on_state_change callback")
 
     async def before_call(self) -> None:
         async with self._lock:
@@ -98,6 +99,7 @@ class CircuitBreaker:
                     remaining = 0.0
                     if self.opened_at is not None:
                         remaining = max(0.0, self.recovery_timeout - (now - self.opened_at))
+                    logger.warning("CircuitBreaker is OPEN. Rejecting call (remaining: %.1fs)", remaining)
                     raise CircuitBreakerOpenError(
                         f"Circuit breaker is OPEN. Calls blocked for another {remaining:.1f}s",
                         reset_timeout=remaining,
@@ -105,6 +107,11 @@ class CircuitBreaker:
 
             if self._state == CircuitState.HALF_OPEN:
                 if self._half_open_inflight >= self.half_open_max_probes:
+                    logger.warning(
+                        "CircuitBreaker HALF_OPEN probe limit reached (%d/%d)",
+                        self._half_open_inflight,
+                        self.half_open_max_probes,
+                    )
                     raise CircuitBreakerOpenError(
                         f"Circuit breaker HALF_OPEN probe limit reached ({self._half_open_inflight}/{self.half_open_max_probes})"
                     )
@@ -131,11 +138,13 @@ class CircuitBreaker:
             if self._state == CircuitState.HALF_OPEN:
                 self._half_open_inflight = max(0, self._half_open_inflight - 1)
                 self.opened_at = time.monotonic()
+                logger.warning("Probe failed during HALF_OPEN: tripping circuit back to OPEN")
                 self._set_state(CircuitState.OPEN)
             elif self._state == CircuitState.CLOSED:
                 self.failure_count += 1
                 if self.failure_count >= self.failure_threshold:
                     self.opened_at = time.monotonic()
+                    logger.warning("Failure threshold (%d) reached: tripping circuit to OPEN", self.failure_threshold)
                     self._set_state(CircuitState.OPEN)
 
     async def reset(self) -> None:

@@ -2,6 +2,7 @@
 
 import functools
 import inspect
+import logging
 import time
 from typing import Any, Callable, Coroutine, Optional, TypeVar, cast
 from flowguard.core.limiter import BaseRateLimiter, TokenBucketLimiter
@@ -10,6 +11,8 @@ from flowguard.core.retry import RetryPolicy
 from flowguard.core.bulkhead import Bulkhead
 from flowguard.exceptions import CircuitBreakerOpenError, BulkheadFullError
 from flowguard.metrics.collector import MetricsCollector
+
+logger = logging.getLogger("flowguard.pipeline")
 
 F = TypeVar("F", bound=Callable[..., Any])
 
@@ -47,6 +50,7 @@ class FlowGuard:
                 try:
                     await self.limiter.acquire(tokens=tokens)
                 except Exception as e:
+                    logger.debug("[%s] Rate limit quota exhausted", self.name)
                     self.metrics.record_rejected("rate_limit")
                     raise e
 
@@ -56,6 +60,7 @@ class FlowGuard:
                     async with self.bulkhead:
                         return await _circuit_and_call()
                 except BulkheadFullError as e:
+                    logger.debug("[%s] Bulkhead concurrency saturated", self.name)
                     self.metrics.record_rejected("bulkhead")
                     raise e
             else:
@@ -67,6 +72,7 @@ class FlowGuard:
                 try:
                     await self.circuit_breaker.before_call()
                 except CircuitBreakerOpenError as e:
+                    logger.debug("[%s] Call rejected by CircuitBreaker", self.name)
                     self.metrics.record_rejected("circuit_breaker")
                     raise e
 
@@ -123,7 +129,6 @@ def guard(
     if failure_threshold > 0:
         circuit_breaker = CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout)
 
-    # Resolve attempts
     attempts = max_attempts if max_attempts is not None else (max_retries + 1 if max_retries > 0 else 1)
     retry_policy = None
     if attempts > 1:

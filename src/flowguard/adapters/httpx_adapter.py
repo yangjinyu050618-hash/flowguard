@@ -4,15 +4,26 @@ from typing import Any, Callable, Coroutine
 from flowguard.core.pipeline import FlowGuard
 from flowguard.exceptions import TransientHTTPError, PermanentHTTPError
 
-TRANSIENT_STATUS_CODES = {429, 500, 502, 503, 504}
+
+def check_http_response_status(resp: Any) -> None:
+    """Classify HTTP response status code into TransientHTTPError or PermanentHTTPError."""
+    if hasattr(resp, "status_code") and isinstance(resp.status_code, int):
+        code = resp.status_code
+        if code == 429 or 500 <= code < 600:
+            msg = getattr(resp, "text", "")
+            raise TransientHTTPError(code, msg)
+        elif 400 <= code < 500:
+            msg = getattr(resp, "text", "")
+            raise PermanentHTTPError(code, msg)
 
 
 class ResilientHTTPClient:
     """
     Wrap an HTTPX AsyncClient with FlowGuard resilience protection.
 
-    Automatically maps downstream HTTP response status codes to TransientHTTPError (retryable)
-    and PermanentHTTPError (fatal client errors) when raise_for_status is True.
+    Automatically maps downstream HTTP response status codes:
+    - 429 and 5xx (500, 501, 502, 503, 504, etc.) -> TransientHTTPError (retried)
+    - 4xx (400, 401, 403, 404, 422, etc.) -> PermanentHTTPError (fail fast)
     """
 
     def __init__(self, client: Any, guard: FlowGuard, raise_for_status: bool = True) -> None:
@@ -25,14 +36,8 @@ class ResilientHTTPClient:
     ) -> Any:
         async def _call() -> Any:
             resp = await func(*args, **kwargs)
-            if self.raise_for_status and hasattr(resp, "status_code"):
-                code = resp.status_code
-                if code in TRANSIENT_STATUS_CODES:
-                    msg = getattr(resp, "text", "")
-                    raise TransientHTTPError(code, msg)
-                elif 400 <= code < 500:
-                    msg = getattr(resp, "text", "")
-                    raise PermanentHTTPError(code, msg)
+            if self.raise_for_status:
+                check_http_response_status(resp)
             return resp
 
         return await self.guard.execute(_call)

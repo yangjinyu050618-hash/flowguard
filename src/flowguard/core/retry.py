@@ -4,9 +4,38 @@ import asyncio
 import inspect
 import random
 from typing import Any, Callable, Coroutine, Optional, Tuple, Type, TypeVar
-from flowguard.exceptions import FlowGuardError, MaxRetriesExceededError
+from flowguard.exceptions import FlowGuardError, MaxRetriesExceededError, PermanentHTTPError
 
 T = TypeVar("T")
+
+
+def is_permanent_client_error(exc: BaseException) -> bool:
+    """Detect if an exception represents an unretryable client/auth HTTP error."""
+    # 1. FlowGuard internal errors or permanent HTTP errors
+    if isinstance(exc, (FlowGuardError, PermanentHTTPError)):
+        return True
+
+    # 2. HTTP status code inspection (e.g. OpenAI APIStatusError, httpx.HTTPStatusError)
+    status_code = getattr(exc, "status_code", None)
+    if isinstance(status_code, int):
+        if 400 <= status_code < 500 and status_code != 429:
+            return True
+        if status_code == 429 or 500 <= status_code < 600:
+            return False
+
+    # 3. Class name patterns for authentication / bad request in API SDKs
+    name = type(exc).__name__
+    if name in {
+        "AuthenticationError",
+        "PermissionDeniedError",
+        "NotFoundError",
+        "BadRequestError",
+        "UnprocessableEntityError",
+        "InvalidRequestError",
+    }:
+        return True
+
+    return False
 
 
 class BackoffStrategy:
@@ -19,17 +48,6 @@ class BackoffStrategy:
 class ExponentialBackoff(BackoffStrategy):
     """
     Exponential backoff with full, equal, or decorrelated jitter.
-
-    Parameters
-    ----------
-    base_delay : float
-        Initial retry backoff delay in seconds (default: 0.5s).
-    max_delay : float
-        Maximum upper-bound delay cap in seconds (default: 60.0s).
-    multiplier : float
-        Exponential growth multiplier (default: 2.0).
-    jitter : str
-        Jitter mode: 'full', 'equal', 'decorrelated', or 'none' (default: 'full').
     """
 
     def __init__(
@@ -50,7 +68,6 @@ class ExponentialBackoff(BackoffStrategy):
 
     def compute_delay(self, attempt: int, previous_delay: float = 0.0) -> float:
         if self.jitter == "decorrelated":
-            # Decorrelated Jitter: Sleep = min(max_delay, uniform(base_delay, prev_delay * 3))
             upper = max(self.base_delay, previous_delay * 3.0)
             return min(self.max_delay, random.uniform(self.base_delay, upper))
 
@@ -65,22 +82,7 @@ class ExponentialBackoff(BackoffStrategy):
 
 class RetryPolicy:
     """
-    Configurable asynchronous retry policy.
-
-    Parameters
-    ----------
-    max_attempts : int
-        Maximum number of execution attempts (including initial call). Default: 3.
-    backoff : Optional[BackoffStrategy]
-        Backoff algorithm instance. Defaults to ExponentialBackoff().
-    retryable_exceptions : Tuple[Type[Exception], ...]
-        Exceptions eligible for retry. Defaults to (Exception,).
-    fatal_exceptions : Tuple[Type[Exception], ...]
-        Exceptions that immediately abort retry loop. Defaults to (FlowGuardError,).
-    reraise : bool
-        If True, re-raises the original last exception instead of wrapping in MaxRetriesExceededError.
-    on_retry : Optional[Callable[[int, BaseException, float], Any]]
-        Callback executed before each sleep retry (attempt, exception, delay).
+    Configurable asynchronous retry policy with automatic fatal error fail-fast.
     """
 
     def __init__(
@@ -88,7 +90,7 @@ class RetryPolicy:
         max_attempts: int = 3,
         backoff: Optional[BackoffStrategy] = None,
         retryable_exceptions: Tuple[Type[Exception], ...] = (Exception,),
-        fatal_exceptions: Tuple[Type[Exception], ...] = (FlowGuardError,),
+        fatal_exceptions: Tuple[Type[Exception], ...] = (FlowGuardError, PermanentHTTPError),
         reraise: bool = False,
         on_retry: Optional[Callable[[int, BaseException, float], Any]] = None,
     ) -> None:
@@ -113,6 +115,9 @@ class RetryPolicy:
             except self.fatal_exceptions:
                 raise
             except self.retryable_exceptions as exc:
+                if is_permanent_client_error(exc):
+                    raise exc
+
                 last_exc = exc
                 if attempt == self.max_attempts:
                     break

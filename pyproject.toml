@@ -3,14 +3,14 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "flowguard"
+name = "flowguard-core"
 version = "0.2.1"
 description = "High-performance Async Rate Limiting, Circuit Breaking & Resilience Orchestration for LLM & API Pipelines"
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
 authors = [
-    { name = "FlowGuard Contributors", email = "maintainers@flowguard.dev" }
+    { name = "yangjinyu050618-hash", email = "yangjinyu050618@gmail.com" }
 ]
 keywords = [
     "rate-limiter",

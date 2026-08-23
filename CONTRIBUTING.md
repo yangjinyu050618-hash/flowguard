@@ -6,7 +6,7 @@ Thank you for your interest in contributing to FlowGuard! We welcome contributio
 
 1. **Fork and clone the repository:**
    ```bash
-   git clone https://github.com/your-username/flowguard.git
+   git clone https://github.com/yangjinyu050618-hash/flowguard.git
    cd flowguard
    ```
 

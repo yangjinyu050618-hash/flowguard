@@ -60,11 +60,11 @@ dev = [
 flowguard = "flowguard.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/your-username/flowguard"
-Documentation = "https://github.com/your-username/flowguard#readme"
-Repository = "https://github.com/your-username/flowguard.git"
-Issues = "https://github.com/your-username/flowguard/issues"
-Changelog = "https://github.com/your-username/flowguard/blob/main/CHANGELOG.md"
+Homepage = "https://github.com/yangjinyu050618-hash/flowguard"
+Documentation = "https://github.com/yangjinyu050618-hash/flowguard#readme"
+Repository = "https://github.com/yangjinyu050618-hash/flowguard.git"
+Issues = "https://github.com/yangjinyu050618-hash/flowguard/issues"
+Changelog = "https://github.com/yangjinyu050618-hash/flowguard/blob/main/CHANGELOG.md"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/flowguard"]

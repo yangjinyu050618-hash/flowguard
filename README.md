@@ -4,7 +4,7 @@
 
 **High-Performance Async Rate Limiting, Circuit Breaking & Resilience Orchestration for LLM & API Pipelines.**
 
-[![CI Status](https://github.com/your-username/flowguard/actions/workflows/ci.yml/badge.svg)](https://github.com/your-username/flowguard/actions)
+[![CI Status](https://github.com/yangjinyu050618-hash/flowguard/actions/workflows/ci.yml/badge.svg)](https://github.com/yangjinyu050618-hash/flowguard/actions)
 [![PyPI version](https://img.shields.io/badge/pypi-v0.2.1-blue.svg)](https://pypi.org/project/flowguard/)
 [![Python Versions](https://img.shields.io/badge/python-3.9%20%7C%203.10%20%7C%203.11%20%7C%203.12%20%7C%203.13-blue)](https://pypi.org/project/flowguard/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
@@ -79,7 +79,7 @@ pip install flowguard
 *Or install from source:*
 
 ```bash
-git clone https://github.com/your-username/flowguard.git
+git clone https://github.com/yangjinyu050618-hash/flowguard.git
 cd flowguard
 pip install -e .
 ```

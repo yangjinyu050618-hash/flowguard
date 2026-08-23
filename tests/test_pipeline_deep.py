@@ -10,7 +10,7 @@ from flowguard.exceptions import CircuitBreakerOpenError, BulkheadFullError
 
 
 async def test_pipeline_retry_token_consumption_and_metrics():
-    lim = TokenBucketLimiter(rate=100.0, capacity=10.0, initial_tokens=10.0)
+    lim = TokenBucketLimiter(rate=0.01, capacity=10.0, initial_tokens=10.0)
     attempts = 0
 
     async def failing_service():
@@ -29,6 +29,10 @@ async def test_pipeline_retry_token_consumption_and_metrics():
     res = await pipeline.execute(failing_service)
     assert res == "success"
     assert attempts == 3
+    consumed = 10.0 - lim.current_tokens
+    assert consumed == pytest.approx(3.0, abs=0.1), (
+        f"每次重试尝试都应独立消耗令牌：期望 3.0，实际 {consumed:.2f}"
+    )
     summary = pipeline.metrics.get_summary()
     assert summary["success_count"] == 1
     assert summary["failure_count"] == 2

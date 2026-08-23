@@ -29,12 +29,12 @@ class DummyAsyncOpenAI:
 @pytest.mark.asyncio
 async def test_openai_adapter():
     mock_client = DummyAsyncOpenAI()
-    resilient_client = ResilientOpenAI(client=mock_client, rpm_limit=600, tpm_limit=50000, max_retries=2)
+    resilient_client = ResilientOpenAI(
+        client=mock_client, rpm_limit=600, tpm_limit=50000, max_retries=2
+    )
 
     resp = await resilient_client.create_chat_completion(
-        estimated_tokens=100,
-        model="gpt-4o",
-        messages=[{"role": "user", "content": "hi"}]
+        estimated_tokens=100, model="gpt-4o", messages=[{"role": "user", "content": "hi"}]
     )
     assert resp.choices[0].message.content == "OpenAI mock response"
 

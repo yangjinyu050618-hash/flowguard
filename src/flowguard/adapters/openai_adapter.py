@@ -64,7 +64,9 @@ class ResilientOpenAI:
     async def create_chat_completion(self, estimated_tokens: int = 500, **kwargs: Any) -> Any:
         """Call chat.completions.create with adaptive token & request throttling."""
         if self.tpm_limiter:
-            await self.tpm_limiter.acquire(tokens=float(estimated_tokens), timeout=self.acquire_timeout)
+            await self.tpm_limiter.acquire(
+                tokens=float(estimated_tokens), timeout=self.acquire_timeout
+            )
 
         async def _call() -> Any:
             return await self._client.chat.completions.create(**kwargs)

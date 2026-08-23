@@ -41,7 +41,9 @@ class FlowGuard:
         self.bulkhead = bulkhead
         self.metrics = metrics or MetricsCollector(name=name)
 
-    async def execute(self, func: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any) -> Any:
+    async def execute(
+        self, func: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any
+    ) -> Any:
         tokens = kwargs.pop("__flowguard_tokens__", 1.0)
 
         async def _attempt() -> Any:
@@ -99,7 +101,9 @@ class FlowGuard:
     def __call__(self, func: F) -> F:
         """Decorator interface for protecting async functions."""
         if not inspect.iscoroutinefunction(func):
-            raise TypeError(f"FlowGuard decorator currently supports async functions only, got {func}")
+            raise TypeError(
+                f"FlowGuard decorator currently supports async functions only, got {func}"
+            )
 
         @functools.wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -127,9 +131,13 @@ def guard(
 
     circuit_breaker = None
     if failure_threshold > 0:
-        circuit_breaker = CircuitBreaker(failure_threshold=failure_threshold, recovery_timeout=recovery_timeout)
+        circuit_breaker = CircuitBreaker(
+            failure_threshold=failure_threshold, recovery_timeout=recovery_timeout
+        )
 
-    attempts = max_attempts if max_attempts is not None else (max_retries + 1 if max_retries > 0 else 1)
+    attempts = (
+        max_attempts if max_attempts is not None else (max_retries + 1 if max_retries > 0 else 1)
+    )
     retry_policy = None
     if attempts > 1:
         retry_policy = RetryPolicy(max_attempts=attempts)

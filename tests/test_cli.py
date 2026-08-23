@@ -11,6 +11,7 @@ async def test_run_benchmark():
 def test_cli_main(capsys):
     with pytest.raises(SystemExit) as exc:
         import sys
+
         sys.argv = ["flowguard", "--version"]
         main()
     assert exc.value.code == 0

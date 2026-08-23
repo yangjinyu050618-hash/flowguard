@@ -21,7 +21,7 @@ async def test_circuit_breaker_transitions():
     # Wait for recovery timeout
     await asyncio.sleep(0.12)
     assert cb.can_execute() is True
-    
+
     # before_call will transition to HALF_OPEN
     await cb.before_call()
     assert cb.state == CircuitState.HALF_OPEN

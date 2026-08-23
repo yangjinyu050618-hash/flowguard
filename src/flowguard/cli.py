@@ -6,8 +6,12 @@ import time
 from flowguard import __version__, TokenBucketLimiter, FlowGuard
 
 
-async def run_benchmark(concurrency: int = 10, total_requests: int = 50, rate_per_sec: float = 20.0) -> None:
-    print(f"\n--- FlowGuard Benchmark (Rate: {rate_per_sec} req/s, Concurrency: {concurrency}, Total: {total_requests}) ---")
+async def run_benchmark(
+    concurrency: int = 10, total_requests: int = 50, rate_per_sec: float = 20.0
+) -> None:
+    print(
+        f"\n--- FlowGuard Benchmark (Rate: {rate_per_sec} req/s, Concurrency: {concurrency}, Total: {total_requests}) ---"
+    )
     limiter = TokenBucketLimiter(rate=rate_per_sec, capacity=rate_per_sec)
     pipeline = FlowGuard(name="benchmark", limiter=limiter)
 
@@ -31,9 +35,13 @@ async def run_benchmark(concurrency: int = 10, total_requests: int = 50, rate_pe
     await asyncio.gather(*tasks)
 
     elapsed = time.monotonic() - start
-    print(f"Completed {success}/{total_requests} requests in {elapsed:.3f}s ({success / elapsed:.1f} req/s)")
+    print(
+        f"Completed {success}/{total_requests} requests in {elapsed:.3f}s ({success / elapsed:.1f} req/s)"
+    )
     summary = pipeline.metrics.get_summary()
-    print(f"Metrics: p50={summary['latency_p50_ms']}ms, p95={summary['latency_p95_ms']}ms, p99={summary['latency_p99_ms']}ms\n")
+    print(
+        f"Metrics: p50={summary['latency_p50_ms']}ms, p95={summary['latency_p95_ms']}ms, p99={summary['latency_p99_ms']}ms\n"
+    )
 
 
 def main() -> None:
@@ -50,7 +58,11 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "benchmark":
-        asyncio.run(run_benchmark(concurrency=args.concurrency, total_requests=args.total, rate_per_sec=args.rate))
+        asyncio.run(
+            run_benchmark(
+                concurrency=args.concurrency, total_requests=args.total, rate_per_sec=args.rate
+            )
+        )
     else:
         print(f"FlowGuard v{__version__} - Resilient Async Orchestration Toolkit")
         print("Run 'flowguard benchmark' or 'flowguard --help' for options.")

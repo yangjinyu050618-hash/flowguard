@@ -27,6 +27,8 @@ def export_prometheus(collector: MetricsCollector) -> str:
         lines.append(f'flowguard_rejected_total{{pipeline="{name}",reason="{reason}"}} {count}')
 
     for error_type, count in summary.get("failure_by_type", {}).items():
-        lines.append(f'flowguard_failures_by_type_total{{pipeline="{name}",error_type="{error_type}"}} {count}')
+        lines.append(
+            f'flowguard_failures_by_type_total{{pipeline="{name}",error_type="{error_type}"}} {count}'
+        )
 
     return "\n".join(lines) + "\n"

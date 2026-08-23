@@ -43,7 +43,12 @@ async def test_sliding_window_stress():
 
 
 async def test_circuit_breaker_half_open_stampede_protection():
-    cb = CircuitBreaker(failure_threshold=1, recovery_timeout=0.05, half_open_success_threshold=3, half_open_max_probes=3)
+    cb = CircuitBreaker(
+        failure_threshold=1,
+        recovery_timeout=0.05,
+        half_open_success_threshold=3,
+        half_open_max_probes=3,
+    )
     await cb.record_failure(RuntimeError("trip"))
     assert cb.state == CircuitState.OPEN
 

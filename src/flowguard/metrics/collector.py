@@ -39,7 +39,10 @@ class MetricsCollector:
             if len(self.latencies) > 10000:
                 self.latencies = self.latencies[-5000:]
 
-            if len(self.failure_by_type) >= self.max_failure_types and error_type not in self.failure_by_type:
+            if (
+                len(self.failure_by_type) >= self.max_failure_types
+                and error_type not in self.failure_by_type
+            ):
                 self.failure_by_type["other"] += 1
             else:
                 self.failure_by_type[error_type] += 1

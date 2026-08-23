@@ -27,4 +27,7 @@ def test_metrics_collection():
     prom_str = export_prometheus(collector)
     assert "flowguard_requests_total" in prom_str
     assert 'flowguard_rejected_total{pipeline="order-api",reason="circuit_breaker"} 1' in prom_str
-    assert 'flowguard_failures_by_type_total{pipeline="order-api",error_type="TimeoutError"} 1' in prom_str
+    assert (
+        'flowguard_failures_by_type_total{pipeline="order-api",error_type="TimeoutError"} 1'
+        in prom_str
+    )

@@ -70,7 +70,9 @@ class CircuitBreaker:
             return True
         now = time.monotonic()
         if self._state == CircuitState.OPEN:
-            return bool(self.opened_at is not None and (now - self.opened_at >= self.recovery_timeout))
+            return bool(
+                self.opened_at is not None and (now - self.opened_at >= self.recovery_timeout)
+            )
         if self._state == CircuitState.HALF_OPEN:
             return self._half_open_inflight < self.half_open_max_probes
         return False
@@ -79,7 +81,9 @@ class CircuitBreaker:
         if self._state != new_state:
             old_state = self._state
             self._state = new_state
-            logger.info("Circuit breaker state transition: %s -> %s", old_state.value, new_state.value)
+            logger.info(
+                "Circuit breaker state transition: %s -> %s", old_state.value, new_state.value
+            )
             if self.on_state_change:
                 try:
                     self.on_state_change(old_state, new_state)
@@ -99,7 +103,9 @@ class CircuitBreaker:
                     remaining = 0.0
                     if self.opened_at is not None:
                         remaining = max(0.0, self.recovery_timeout - (now - self.opened_at))
-                    logger.debug("CircuitBreaker is OPEN. Rejecting call (remaining: %.1fs)", remaining)
+                    logger.debug(
+                        "CircuitBreaker is OPEN. Rejecting call (remaining: %.1fs)", remaining
+                    )
                     raise CircuitBreakerOpenError(
                         f"Circuit breaker is OPEN. Calls blocked for another {remaining:.1f}s",
                         reset_timeout=remaining,
@@ -144,7 +150,10 @@ class CircuitBreaker:
                 self.failure_count += 1
                 if self.failure_count >= self.failure_threshold:
                     self.opened_at = time.monotonic()
-                    logger.warning("Failure threshold (%d) reached: tripping circuit to OPEN", self.failure_threshold)
+                    logger.warning(
+                        "Failure threshold (%d) reached: tripping circuit to OPEN",
+                        self.failure_threshold,
+                    )
                     self._set_state(CircuitState.OPEN)
 
     async def reset(self) -> None:

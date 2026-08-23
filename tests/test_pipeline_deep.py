@@ -23,7 +23,9 @@ async def test_pipeline_retry_token_consumption_and_metrics():
     pipeline = FlowGuard(
         name="test-pipeline",
         limiter=lim,
-        retry=RetryPolicy(max_attempts=4, backoff=ExponentialBackoff(base_delay=0.001, jitter="none")),
+        retry=RetryPolicy(
+            max_attempts=4, backoff=ExponentialBackoff(base_delay=0.001, jitter="none")
+        ),
     )
 
     res = await pipeline.execute(failing_service)
@@ -54,10 +56,11 @@ async def test_pipeline_circuit_breaker_fast_fail_metric():
 
 async def test_pipeline_bulkhead_saturation_metric():
     bh = Bulkhead(max_concurrent=1, max_queued=0)
-    
+
     pipeline = FlowGuard(name="bh-pipeline", bulkhead=bh)
 
     import asyncio
+
     active_gate = asyncio.Event()
 
     async def blocking_call():
@@ -79,6 +82,7 @@ async def test_pipeline_bulkhead_saturation_metric():
 
 async def test_guard_decorator_type_error():
     with pytest.raises(TypeError):
+
         @guard(name="sync-not-allowed")
         def sync_func():
             pass

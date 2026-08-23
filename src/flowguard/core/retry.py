@@ -11,6 +11,7 @@ T = TypeVar("T")
 
 class BackoffStrategy:
     """Base class for backoff calculation strategies."""
+
     def compute_delay(self, attempt: int, previous_delay: float) -> float:
         raise NotImplementedError
 
@@ -42,7 +43,9 @@ class ExponentialBackoff(BackoffStrategy):
         self.max_delay = max(self.base_delay, max_delay)
         self.multiplier = multiplier
         if jitter not in ("full", "equal", "decorrelated", "none"):
-            raise ValueError(f"Invalid jitter type '{jitter}'. Must be 'full', 'equal', 'decorrelated', or 'none'.")
+            raise ValueError(
+                f"Invalid jitter type '{jitter}'. Must be 'full', 'equal', 'decorrelated', or 'none'."
+            )
         self.jitter = jitter
 
     def compute_delay(self, attempt: int, previous_delay: float = 0.0) -> float:
@@ -98,7 +101,9 @@ class RetryPolicy:
         self.reraise = reraise
         self.on_retry = on_retry
 
-    async def execute(self, func: Callable[..., Coroutine[Any, Any, T]], *args: Any, **kwargs: Any) -> T:
+    async def execute(
+        self, func: Callable[..., Coroutine[Any, Any, T]], *args: Any, **kwargs: Any
+    ) -> T:
         last_exc: Optional[BaseException] = None
         prev_delay = 0.0
 

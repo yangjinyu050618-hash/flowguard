@@ -8,7 +8,7 @@ from flowguard.core.bulkhead import Bulkhead
 
 async def test_token_bucket_cancellation_no_leak():
     lim = TokenBucketLimiter(rate=1.0, capacity=1.0, initial_tokens=0.0)
-    
+
     async def task_to_cancel():
         await lim.acquire(tokens=1.0)
 

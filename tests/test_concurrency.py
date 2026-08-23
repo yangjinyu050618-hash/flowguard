@@ -18,7 +18,9 @@ async def test_token_bucket_fifo_inversions():
     tasks = [asyncio.create_task(worker(i)) for i in range(10)]
     await asyncio.gather(*tasks)
 
-    inversions = sum(1 for i in range(len(served)) for j in range(i + 1, len(served)) if served[i] > served[j])
+    inversions = sum(
+        1 for i in range(len(served)) for j in range(i + 1, len(served)) if served[i] > served[j]
+    )
     assert inversions == 0
     assert served == list(range(10))
 

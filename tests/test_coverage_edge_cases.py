@@ -31,6 +31,7 @@ async def test_httpx_adapter_post_and_request():
     class MockHTTPX:
         async def post(self, url, **kw):
             return "post-ok"
+
         async def request(self, method, url, **kw):
             return f"{method}-ok"
 

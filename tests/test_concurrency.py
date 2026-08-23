@@ -25,7 +25,7 @@ async def test_token_bucket_fifo_inversions():
 
 @pytest.mark.asyncio
 async def test_sliding_window_acquire_and_fifo():
-    lim = SlidingWindowLimiter(max_requests=2, window_seconds=0.1)
+    lim = SlidingWindowLimiter(max_requests=1, window_seconds=0.05)
     served = []
 
     async def worker(idx: int):

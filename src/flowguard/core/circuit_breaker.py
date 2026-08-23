@@ -99,7 +99,7 @@ class CircuitBreaker:
                     remaining = 0.0
                     if self.opened_at is not None:
                         remaining = max(0.0, self.recovery_timeout - (now - self.opened_at))
-                    logger.warning("CircuitBreaker is OPEN. Rejecting call (remaining: %.1fs)", remaining)
+                    logger.debug("CircuitBreaker is OPEN. Rejecting call (remaining: %.1fs)", remaining)
                     raise CircuitBreakerOpenError(
                         f"Circuit breaker is OPEN. Calls blocked for another {remaining:.1f}s",
                         reset_timeout=remaining,
@@ -107,7 +107,7 @@ class CircuitBreaker:
 
             if self._state == CircuitState.HALF_OPEN:
                 if self._half_open_inflight >= self.half_open_max_probes:
-                    logger.warning(
+                    logger.debug(
                         "CircuitBreaker HALF_OPEN probe limit reached (%d/%d)",
                         self._half_open_inflight,
                         self.half_open_max_probes,

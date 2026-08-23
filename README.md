@@ -155,6 +155,23 @@ print(export_prometheus(pipeline.metrics))
 
 ---
 
+## 📚 Runnable Examples
+
+Explore ready-to-run code examples in the [`examples/`](examples/) directory:
+
+- [`examples/01_quickstart_guard.py`](examples/01_quickstart_guard.py) — One-line `@guard` decorator protecting async functions.
+- [`examples/02_openai_resilient_chat.py`](examples/02_openai_resilient_chat.py) — OpenAI chat completions with dual RPM & TPM budget throttling.
+- [`examples/03_fastapi_integration.py`](examples/03_fastapi_integration.py) — FastAPI microservice integration & Prometheus exposition.
+
+Run any example directly:
+```bash
+python examples/01_quickstart_guard.py
+python examples/02_openai_resilient_chat.py
+python examples/03_fastapi_integration.py
+```
+
+---
+
 ## 📄 License
 
 This project is licensed under the [MIT License](LICENSE).

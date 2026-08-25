@@ -1,4 +1,4 @@
-"""Drop-in FlowGuard resilience wrapper for OpenAI & LLM API clients."""
+"""Drop-in FlowGuard resilience wrapper for Google Gemini & GenAI clients."""
 
 from typing import Any, Callable, Optional, Tuple, Type
 from flowguard.core.limiter import TokenBucketLimiter
@@ -15,17 +15,17 @@ DEFAULT_FATAL_EXCEPTIONS: Tuple[Type[Exception], ...] = (
 )
 
 
-class ResilientOpenAI:
+class ResilientGemini:
     """
-    Transparent rate-limited, retry-protected and fallback-enabled wrapper around OpenAI AsyncClient.
+    Transparent rate-limited, retry-protected and fallback-enabled wrapper around Google GenAI client.
     """
 
     def __init__(
         self,
         client: Any,
-        rpm_limit: float = 500.0,
+        rpm_limit: float = 300.0,
         rpm_burst_capacity: Optional[float] = None,
-        tpm_limit: Optional[float] = None,
+        tpm_limit: Optional[float] = 60_000.0,
         tpm_burst_capacity: Optional[float] = None,
         max_retries: int = 4,
         acquire_timeout: Optional[float] = 60.0,
@@ -60,20 +60,30 @@ class ResilientOpenAI:
             self.retry_policy = None
 
         self.pipeline = FlowGuard(
-            name="openai-resilient-pipeline",
+            name="gemini-resilient-pipeline",
             limiter=self.rpm_limiter,
             retry=self.retry_policy,
             fallback=fallback,
         )
 
-    async def create_chat_completion(self, estimated_tokens: int = 500, **kwargs: Any) -> Any:
-        """Call chat.completions.create with per-attempt TPM and RPM throttling."""
+    async def generate_content(
+        self, model: str, contents: Any, estimated_tokens: int = 500, **kwargs: Any
+    ) -> Any:
+        """Call client.aio.models.generate_content with per-attempt TPM and RPM throttling."""
 
         async def _call(*_args: Any, **call_kw: Any) -> Any:
             if self.tpm_limiter:
                 await self.tpm_limiter.acquire(
                     tokens=float(estimated_tokens), timeout=self.acquire_timeout
                 )
-            return await self._client.chat.completions.create(**call_kw)
+            kw = dict(call_kw)
+            m = kw.pop("model", model)
+            c = kw.pop("contents", contents)
+            if hasattr(self._client, "aio") and hasattr(self._client.aio, "models"):
+                return await self._client.aio.models.generate_content(model=m, contents=c, **kw)
+            elif hasattr(self._client, "generate_content_async"):
+                return await self._client.generate_content_async(c, **kw)
+            else:
+                return await self._client.models.generate_content(model=m, contents=c, **kw)
 
-        return await self.pipeline.execute(_call, **kwargs)
+        return await self.pipeline.execute(_call, model=model, contents=contents, **kwargs)

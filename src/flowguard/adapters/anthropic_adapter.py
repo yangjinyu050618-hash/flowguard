@@ -1,4 +1,4 @@
-"""Drop-in FlowGuard resilience wrapper for OpenAI & LLM API clients."""
+"""Drop-in FlowGuard resilience wrapper for Anthropic Claude clients."""
 
 from typing import Any, Callable, Optional, Tuple, Type
 from flowguard.core.limiter import TokenBucketLimiter
@@ -15,17 +15,17 @@ DEFAULT_FATAL_EXCEPTIONS: Tuple[Type[Exception], ...] = (
 )
 
 
-class ResilientOpenAI:
+class ResilientAnthropic:
     """
-    Transparent rate-limited, retry-protected and fallback-enabled wrapper around OpenAI AsyncClient.
+    Transparent rate-limited, retry-protected and fallback-enabled wrapper around Anthropic AsyncAnthropic client.
     """
 
     def __init__(
         self,
         client: Any,
-        rpm_limit: float = 500.0,
+        rpm_limit: float = 300.0,
         rpm_burst_capacity: Optional[float] = None,
-        tpm_limit: Optional[float] = None,
+        tpm_limit: Optional[float] = 40_000.0,
         tpm_burst_capacity: Optional[float] = None,
         max_retries: int = 4,
         acquire_timeout: Optional[float] = 60.0,
@@ -60,20 +60,20 @@ class ResilientOpenAI:
             self.retry_policy = None
 
         self.pipeline = FlowGuard(
-            name="openai-resilient-pipeline",
+            name="anthropic-resilient-pipeline",
             limiter=self.rpm_limiter,
             retry=self.retry_policy,
             fallback=fallback,
         )
 
-    async def create_chat_completion(self, estimated_tokens: int = 500, **kwargs: Any) -> Any:
-        """Call chat.completions.create with per-attempt TPM and RPM throttling."""
+    async def create_message(self, estimated_tokens: int = 500, **kwargs: Any) -> Any:
+        """Call messages.create with per-attempt TPM and RPM throttling."""
 
         async def _call(*_args: Any, **call_kw: Any) -> Any:
             if self.tpm_limiter:
                 await self.tpm_limiter.acquire(
                     tokens=float(estimated_tokens), timeout=self.acquire_timeout
                 )
-            return await self._client.chat.completions.create(**call_kw)
+            return await self._client.messages.create(**call_kw)
 
         return await self.pipeline.execute(_call, **kwargs)

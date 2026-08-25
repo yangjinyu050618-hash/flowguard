@@ -1,4 +1,4 @@
-"""FlowGuard: Composable Resilience Pipeline (Retry -> Limiter -> Bulkhead -> Breaker -> Call)."""
+"""FlowGuard: Composable Resilience Pipeline (Retry -> Limiter -> Bulkhead -> Breaker -> Call -> Fallback)."""
 
 import asyncio
 import functools
@@ -20,10 +20,10 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 class FlowGuard:
     """
-    Unified Orchestrator combining Retry, Rate Limiting, Bulkhead Concurrency, and Circuit Breaking.
+    Unified Orchestrator combining Retry, Rate Limiting, Bulkhead Concurrency, Circuit Breaking, and Fallback.
 
     Architecture Hierarchy:
-    Retry (outer) -> RateLimiter -> Bulkhead -> CircuitBreaker -> Target Downstream
+    Retry (outer) -> RateLimiter -> Bulkhead -> CircuitBreaker -> Target Downstream -> Fallback
     """
 
     def __init__(
@@ -33,6 +33,7 @@ class FlowGuard:
         circuit_breaker: Optional[CircuitBreaker] = None,
         retry: Optional[RetryPolicy] = None,
         bulkhead: Optional[Bulkhead] = None,
+        fallback: Optional[Callable[..., Any]] = None,
         metrics: Optional[MetricsCollector] = None,
     ) -> None:
         self.name = name
@@ -40,7 +41,31 @@ class FlowGuard:
         self.circuit_breaker = circuit_breaker
         self.retry = retry
         self.bulkhead = bulkhead
+        self.fallback = fallback
         self.metrics = metrics or MetricsCollector(name=name)
+
+    async def _handle_fallback(self, exc: BaseException, *args: Any, **kwargs: Any) -> Any:
+        if self.fallback is not None:
+            try:
+                try:
+                    sig = inspect.signature(self.fallback)
+                    call_kwargs = dict(kwargs)
+                    if "exc" in sig.parameters:
+                        call_kwargs["exc"] = exc
+                    res = self.fallback(*args, **call_kwargs)
+                except TypeError:
+                    try:
+                        res = self.fallback(exc)
+                    except TypeError:
+                        res = self.fallback()
+
+                if inspect.isawaitable(res):
+                    return await res
+                return res
+            except Exception as fb_exc:
+                logger.exception("[%s] Fallback handler failed: %s", self.name, fb_exc)
+                raise fb_exc from exc
+        raise exc
 
     async def execute(
         self, func: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any
@@ -98,10 +123,15 @@ class FlowGuard:
                 self.metrics.record_failure(latency, type(exc).__name__)
                 raise exc
 
-        # 4. Outer retry loop
-        if self.retry:
-            return await self.retry.execute(_attempt)
-        return await _attempt()
+        try:
+            # 4. Outer retry loop
+            if self.retry:
+                return await self.retry.execute(_attempt)
+            return await _attempt()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            return await self._handle_fallback(exc, *args, **kwargs)
 
     def __call__(self, func: F) -> F:
         """Decorator interface for protecting async functions."""
@@ -126,9 +156,10 @@ def guard(
     failure_threshold: int = 5,
     recovery_timeout: float = 30.0,
     max_concurrent: Optional[int] = None,
+    fallback: Optional[Callable[..., Any]] = None,
 ) -> Callable[[F], F]:
     """
-    Convenient all-in-one decorator factory.
+    Convenient all-in-one decorator factory with fallback degradation support.
     """
     limiter = None
     if rate_per_sec is not None:
@@ -157,5 +188,6 @@ def guard(
         circuit_breaker=circuit_breaker,
         retry=retry_policy,
         bulkhead=bulkhead,
+        fallback=fallback,
     )
     return pipeline

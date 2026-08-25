@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "flowguard-core"
-version = "0.2.2"
+version = "0.3.0"
 description = "High-performance Async Rate Limiting, Circuit Breaking & Resilience Orchestration for LLM & API Pipelines"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -16,9 +16,12 @@ keywords = [
     "rate-limiter",
     "circuit-breaker",
     "resilience",
+    "fallback",
     "asyncio",
     "llm",
     "openai",
+    "anthropic",
+    "gemini",
     "token-bucket",
     "exponential-backoff",
     "bulkhead",

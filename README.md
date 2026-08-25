@@ -31,7 +31,8 @@ When dealing with third-party LLM providers, rate limits (RPM / TPM), transient 
 - 🔌 **Probe-Gated Circuit Breaker**: State-machine driven (`CLOSED` → `OPEN` → `HALF_OPEN`) with explicit probe concurrency limits preventing half-open stampedes and safe cancellation slot cleanup.
 - 🔁 **Smart Exponential Backoff & Jitter**: Full Jitter, Equal Jitter, and Decorrelated Jitter algorithms preventing thundering herds.
 - 🧱 **Bulkhead Isolation**: Asynchronous concurrency gates preventing cascaded resource exhaustion.
-- 🤖 **LLM Native Adapters**: RPM & TPM rate limiting with per-attempt token reservation and HTTP error classification for OpenAI and HTTPX clients.
+- 🤖 **LLM Native Adapters**: RPM & TPM rate limiting with per-attempt token reservation for OpenAI, Anthropic Claude, and Google Gemini.
+- 🔀 **Fallback & Human-in-the-Loop Routing**: Graceful degradation with automatic fallback or `ChoiceFallback` interactive multi-model selection.
 - 📊 **Telemetry & Exporters**: P50/P95/P99 latency histogram tracker with Prometheus text format & JSON export with sanitized label escaping.
 - 🪶 **True Zero Dependencies**: Pure Python asyncio standard library core (`PEP 561` typed).
 
@@ -59,6 +60,11 @@ Incoming Task -> [ Retry Loop (outer) ]
                       │
                       ▼
            Target Downstream Service
+                      │ (on permanent failure / circuit open)
+                      ▼
+         ┌─────────────────────────┐
+         │ Fallback / ChoiceRouter │ (Human-in-the-loop / Auto-Failover)
+         └─────────────────────────┘
 ```
 
 ---
@@ -79,11 +85,14 @@ cd flowguard
 pip install -e .
 ```
 
-### 1. One-Line Decorator `@guard`
+### 1. One-Line Decorator `@guard` with Fallback
 
 ```python
 import asyncio
 from flowguard import guard
+
+async def fallback_report(prompt: str, exc: Exception = None) -> str:
+    return f"[FALLBACK] Cached report for: {prompt}"
 
 @guard(
     name="llm-caller",
@@ -93,6 +102,7 @@ from flowguard import guard
     failure_threshold=5,     # Trip circuit breaker after 5 consecutive failures
     recovery_timeout=15.0,   # Wait 15s before probe in HALF_OPEN state
     max_concurrent=10,       # Max 10 concurrent requests (Bulkhead)
+    fallback=fallback_report,# Graceful degradation handler
 )
 async def fetch_completion(prompt: str) -> str:
     return f"Response to {prompt}"
@@ -107,31 +117,43 @@ if __name__ == "__main__":
 
 ---
 
-## 🤖 Ecosystem Adapters
+## 🤖 Ecosystem Adapters & Multi-LLM Orchestration
 
-### OpenAI Client Throttling & Protection
+FlowGuard provides native async adapters for OpenAI, Anthropic Claude, and Google Gemini:
 
 ```python
-from openai import AsyncOpenAI
-from flowguard.adapters import ResilientOpenAI
+from flowguard.adapters import ResilientOpenAI, ResilientAnthropic, ResilientGemini
 
-client = AsyncOpenAI(api_key="sk-...")
+openai_client = ResilientOpenAI(raw_openai, rpm_limit=500.0, tpm_limit=60_000.0)
+claude_client = ResilientAnthropic(raw_anthropic, rpm_limit=300.0, tpm_limit=40_000.0)
+gemini_client = ResilientGemini(raw_gemini, rpm_limit=300.0, tpm_limit=60_000.0)
+```
 
-# Wrap client with 500 RPM and 100,000 TPM limit
-resilient_client = ResilientOpenAI(
-    client=client,
-    rpm_limit=500.0,
-    tpm_limit=100_000.0,
-    max_retries=4,
+---
+
+## 🔀 Interactive Human-in-the-Loop Fallback (`ChoiceFallback`)
+
+When a primary model trips or fails, `ChoiceFallback` prompts the user or decision engine to dynamically select a replacement model:
+
+```python
+from flowguard import guard, ChoiceFallback
+
+async def ask_user_for_model(exc: Exception, available_options: list[str]) -> str:
+    # Query CLI prompt, Web UI modal, or agent decision engine
+    print(f"Primary model failed: {exc}. Choose fallback from {available_options}:")
+    return "deepseek-r1"
+
+router = ChoiceFallback(
+    candidates={
+        "claude-3.5-sonnet": call_claude,
+        "deepseek-r1": call_deepseek,
+        "gemini-2.5-flash": call_gemini,
+    },
+    selector=ask_user_for_model,
 )
 
-async def run_chat():
-    response = await resilient_client.create_chat_completion(
-        estimated_tokens=800,
-        model="gpt-4o",
-        messages=[{"role": "user", "content": "Explain quantum computing in 3 sentences."}]
-    )
-    print(response["choices"][0]["message"]["content"])
+@guard(name="gpt-primary", failure_threshold=2, fallback=router)
+async def ask_gpt5(prompt: str) -> str: ...
 ```
 
 ---
@@ -162,12 +184,18 @@ Explore ready-to-run code examples in the [`examples/`](examples/) directory:
 - [`examples/01_quickstart_guard.py`](examples/01_quickstart_guard.py) — One-line `@guard` decorator protecting async functions.
 - [`examples/02_openai_resilient_chat.py`](examples/02_openai_resilient_chat.py) — OpenAI chat completions with dual RPM & TPM budget throttling.
 - [`examples/03_fastapi_integration.py`](examples/03_fastapi_integration.py) — FastAPI microservice integration & Prometheus exposition.
+- [`examples/04_fallback_graceful_degradation.py`](examples/04_fallback_graceful_degradation.py) — Graceful degradation when circuit breaker trips.
+- [`examples/05_multi_llm_orchestration.py`](examples/05_multi_llm_orchestration.py) — Multi-LLM resilience across OpenAI, Anthropic Claude & Google Gemini.
+- [`examples/06_interactive_human_in_the_loop_fallback.py`](examples/06_interactive_human_in_the_loop_fallback.py) — Interactive decision-driven model failover.
 
 Run any example directly:
 ```bash
 python examples/01_quickstart_guard.py
 python examples/02_openai_resilient_chat.py
 python examples/03_fastapi_integration.py
+python examples/04_fallback_graceful_degradation.py
+python examples/05_multi_llm_orchestration.py
+python examples/06_interactive_human_in_the_loop_fallback.py
 ```
 
 ---

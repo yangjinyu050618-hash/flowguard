@@ -33,11 +33,14 @@ from flowguard.core.pipeline import (
     FlowGuard,
     guard,
 )
+from flowguard.core.fallback import (
+    ChoiceFallback,
+)
 from flowguard.metrics.collector import (
     MetricsCollector,
 )
 
-__version__ = "0.2.2"
+__version__ = "0.3.0"
 __all__ = [
     "__version__",
     "FlowGuardError",
@@ -59,5 +62,6 @@ __all__ = [
     "Bulkhead",
     "FlowGuard",
     "guard",
+    "ChoiceFallback",
     "MetricsCollector",
 ]

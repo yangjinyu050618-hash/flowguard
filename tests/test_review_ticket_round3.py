@@ -251,7 +251,7 @@ def test_version_sync():
     assert match is not None, "Could not find project.version in pyproject.toml"
     expected_version = match.group(1)
     assert __version__ == expected_version
-    assert __version__ == "0.2.2"
+    assert __version__ == "0.3.0"
 
 
 # -------------------------------------------------------------------------

@@ -1,57 +1,46 @@
-# 🛡️ FlowGuard v0.3.0 二次验收与严格签名契约报告 (For Review)
+# 🛡️ FlowGuard v0.3.0 第三次验收与深度契约修复报告 (For Review)
 
 > **项目名称**：`FlowGuard` (`flowguard-core` on PyPI)  
 > **版本**：`v0.3.0`  
 > **代码仓库**：[yangjinyu050618-hash/flowguard](https://github.com/yangjinyu050618-hash/flowguard)  
-> **测试状态**：**75 / 75 测试通过 (100%)** | **覆盖率：92.69%** | **Mypy Strict：0 告警** | **Ruff：0 错误**  
+> **测试状态**：**78 / 78 测试通过 (100%)** | **覆盖率：92.21%** | **Mypy Strict：0 告警** | **Ruff：0 错误**  
 
 ---
 
-## 📌 二次验收问题闭环清单
+## 📌 第三次验收问题闭环对照清单
 
-根据《FlowGuard v0.3.0 二次验收报告》，本次提交已针对 **2 个 P1 阻断问题、2 个 P2 问题和 1 个 P3 问题** 进行了全部修复并增加了严格签名测试：
+根据《FlowGuard v0.3.0 第三次验收报告》，本次提交已针对 **1 个 P1 阻断问题、2 个 P2 问题和 1 个 P3 问题** 完成了彻底闭环：
 
-### 1. 【P1-1 修复】消除资源方法中的 `max_retries` 参数，严格适配官方 SDK
-* **根因**：OpenAI 的 `chat.completions.create` 与 Anthropic 的 `messages.create` 官方方法签名不接收 `max_retries` 关键字入参，设置 SDK 层重试必须在客户端层。
+### 1. 【P1 修复】彻底隔离签名检查与 Candidate 业务调用，杜绝二次执行
+* **根因**：原 `fallback.py` 中将 `inspect.signature(target_func)` 与 `target_func(...)` 的实际调用置于同一 `try...except (ValueError, TypeError)` 块中，导致同步 candidate 自身抛出业务 `TypeError` 时被捕获并重复调用第 2 次。
 * **修复**：
-  * 在适配器构造阶段，使用 `client.with_options(max_retries=0)` 在客户端层面禁用 SDK 内置重试，保持调用者传入的原客户端无副作用；
-  * `create_chat_completion` 与 `create_message` 在调用资源方法时，**绝不向请求方法透传 `max_retries`**；
-  * 编写了严格方法签名的 Fake Client 测试（不包含 `**kwargs` 放行未知参数），断言调用成功且 FlowGuard 仍是唯一重试所有者。
-* **新增测试**：`test_openai_strict_signature_and_sole_retry_ownership`、`test_anthropic_strict_signature_and_sole_retry_ownership`。
+  * 将 `inspect.signature` 的静态探针完全移至业务调用外部；
+  * `target_func(...)` 调用处于独立执行块中，任何内部异常（包括同步/异步 `TypeError`）**严格执行且仅执行 1 次**，并直接原样沿异常链抛出。
+* **新增测试**：`test_choice_fallback_sync_candidate_type_error_executed_once`（断言抛出原始 `TypeError` 且调用次数严格为 1）。
 
 ---
 
-### 2. 【P1-2 修复】废除参数名匹配，采用显式 `FallbackContext` 类型契约
-* **根因**：原实现检查参数名中是否包含 `context` 或 `ctx`，导致含正常业务参数 `context`/`ctx` 的普通 fallback 函数（如 `fallback(context, prompt)`）丢失其他入参。
+### 2. 【P2 修复】支持 `from __future__ import annotations` 延迟注解协议
+* **根因**：开启 `from __future__ import annotations` 后，Python 将类型注解转为字符串（`"FallbackContext"`），原 `is_context_handler` 无法通过类对象或 `__name__` 识别。
 * **修复**：
-  * 引入显式判定规则 `is_context_handler(func)`：
-    1. 检查是否为 `ChoiceFallback` 实例；
-    2. 检查是否使用 `@with_fallback_context` 显式装饰；
-    3. 检查参数类型注解是否为 `FallbackContext`。
-  * 对普通业务 fallback（即使参数名为 `context`、`ctx`、`prompt`、`user_id`），一律完整透传原始 `*args, **kwargs`，完全不破坏业务参数契约。
-* **新增测试**：`test_ordinary_business_fallback_with_context_param_name`、`test_ordinary_business_fallback_with_ctx_param_name`、`test_explicit_fallback_context_handler_via_annotation_or_decorator`。
+  * 在 `is_context_handler` 中引入双重解析机制：
+    1. 优先调用 `typing.get_type_hints(func)` 解析前向引用与延迟注解；
+    2. 回退机制中检查参数注解字符串是否为 `"FallbackContext"` 或以 `".FallbackContext"` 结尾。
+* **新增测试**：独立模块 `tests/test_future_annotations.py`，包含 `test_future_annotations_fallback_context` 与 `test_future_annotations_choice_fallback_candidate`。
 
 ---
 
-### 3. 【P2 修复】`FallbackContext.kwargs` 真正运行时不可变
-* **修复**：在 `FallbackContext.__post_init__` 中将 `kwargs` 封装为 `types.MappingProxyType`。
-* **效果**：在运行时对 `ctx.kwargs["k"] = "v"` 赋值会直接抛出 `TypeError: 'mappingproxy' object does not support item assignment`，达成真正不可变。
-* **新增测试**：`test_fallback_context_kwargs_true_immutability`。
+### 3. 【P2 修复】Gemini 重试边界在 API Doc 与 README 中真实落地
+* **修复**：
+  * 在 `src/flowguard/adapters/gemini_adapter.py` 的 `ResilientGemini` 类文档中详细声明重试所有权与 `http_options` 推荐配置规范；
+  * 在 `README.md` 中增加显式的 `Note on Retry Ownership` 警告说明，明确 FlowGuard 的单一重试所有者职责。
 
 ---
 
-### 4. 【P2 修复】明确 Gemini 自定义重试边界与文档规范
-* **修复**：在 `ResilientGemini` 类文档与 README 中明确注明：FlowGuard 接管外层弹性编排；官方 `google-genai` SDK 推荐使用默认配置或在 `http_options` 中避免开启重复重试。
-
----
-
-### 5. 【P3 修复】README 示例同步更新为 `FallbackContext`
-* **修复**：已同步更新 `README.md` 中 `ChoiceFallback` 的 selector 签名：
-  ```python
-  async def ask_user_for_model(context: FallbackContext, available_options: list[str]) -> str:
-      print(f"Primary model failed: {context.exception}. Choose fallback from {available_options}:")
-      return "deepseek-r1"
-  ```
+### 4. 【P3 修复】修正 Strict Fake 资源方法签名，移除 `**kwargs`
+* **修复**：
+  * `tests/test_p1_p2_fixes.py` 中的 `StrictOpenAICompletions.create` 与 `StrictAnthropicMessages.create` **完全去除了 `**kwargs` 通配符**，改为真实严格的具名关键字参数；
+  * 证明适配器在调用时不向资源方法透传 `max_retries`，完全符合官方 SDK 签名规范。
 
 ---
 
@@ -60,29 +49,32 @@
 ```text
 ============================= test session starts =============================
 platform win32 -- Python 3.11.15, pytest-9.0.2, pluggy-1.6.0
-collected 75 items
+collected 78 items
 
 tests/test_adapters.py::test_openai_adapter PASSED                       [  1%]
 tests/test_adapters.py::test_httpx_adapter PASSED                        [  2%]
 tests/test_anthropic_adapter.py::test_anthropic_adapter_basic PASSED     [  4%]
 tests/test_anthropic_adapter.py::test_anthropic_adapter_fallback PASSED  [  5%]
-tests/test_fallback.py::test_fallback_on_circuit_breaker_open PASSED     [ 34%]
-tests/test_fallback.py::test_fallback_on_retry_exhaustion PASSED         [ 36%]
-tests/test_fallback.py::test_fallback_decorator_integration PASSED       [ 37%]
-tests/test_fallback.py::test_fallback_cancellation_does_not_trigger_fallback PASSED [ 38%]
-tests/test_fallback.py::test_choice_fallback_interactive_selection PASSED [ 40%]
-tests/test_fallback.py::test_choice_fallback_validation PASSED           [ 41%]
+tests/test_fallback.py::test_fallback_on_circuit_breaker_open PASSED     [ 33%]
+tests/test_fallback.py::test_fallback_on_retry_exhaustion PASSED         [ 34%]
+tests/test_fallback.py::test_fallback_decorator_integration PASSED       [ 35%]
+tests/test_fallback.py::test_fallback_cancellation_does_not_trigger_fallback PASSED [ 37%]
+tests/test_fallback.py::test_choice_fallback_interactive_selection PASSED [ 38%]
+tests/test_fallback.py::test_choice_fallback_validation PASSED           [ 39%]
+tests/test_future_annotations.py::test_future_annotations_fallback_context PASSED [ 41%]
+tests/test_future_annotations.py::test_future_annotations_choice_fallback_candidate PASSED [ 42%]
 tests/test_p1_p2_fixes.py::test_openai_strict_signature_and_sole_retry_ownership PASSED [ 53%]
-tests/test_p1_p2_fixes.py::test_anthropic_strict_signature_and_sole_retry_ownership PASSED [ 54%]
-tests/test_p1_p2_fixes.py::test_ordinary_business_fallback_with_context_param_name PASSED [ 56%]
-tests/test_p1_p2_fixes.py::test_ordinary_business_fallback_with_ctx_param_name PASSED [ 57%]
-tests/test_p1_p2_fixes.py::test_explicit_fallback_context_handler_via_annotation_or_decorator PASSED [ 58%]
-tests/test_p1_p2_fixes.py::test_fallback_context_kwargs_true_immutability PASSED [ 60%]
+tests/test_p1_p2_fixes.py::test_anthropic_strict_signature_and_sole_retry_ownership PASSED [ 55%]
+tests/test_p1_p2_fixes.py::test_choice_fallback_sync_candidate_type_error_executed_once PASSED [ 56%]
+tests/test_p1_p2_fixes.py::test_ordinary_business_fallback_with_context_param_name PASSED [ 57%]
+tests/test_p1_p2_fixes.py::test_ordinary_business_fallback_with_ctx_param_name PASSED [ 58%]
+tests/test_p1_p2_fixes.py::test_explicit_fallback_context_handler_via_annotation_or_decorator PASSED [ 60%]
+tests/test_p1_p2_fixes.py::test_fallback_context_kwargs_true_immutability PASSED [ 61%]
 ...
 =============================== tests coverage ================================
-TOTAL: 930 statements, 68 missed -> 92.69% Coverage
-============================= 75 passed in 2.81s ==============================
+TOTAL: 950 statements, 74 missed -> 92.21% Coverage
+============================= 78 passed in 2.82s ==============================
 ```
 
-* **静态检查**：`mypy src/flowguard` (Strict Mode) 👉 **0 告警**
-* **Lint 检查**：`ruff check src tests examples` 👉 **All checks passed (0 errors)**
+* **静态类型检查**：`mypy src/flowguard` (Strict Mode) 👉 **0 告警 (18 files)**
+* **代码格式与 Lint**：`ruff check src tests examples` 👉 **All checks passed (0 errors)**

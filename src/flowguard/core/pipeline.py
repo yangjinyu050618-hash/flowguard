@@ -59,13 +59,18 @@ class FlowGuard:
         )
 
         try:
-            # P1-2: Explicit context handler checking (annotation or wrapper), no parameter name guessing!
+            # P1: Inspect signature statically outside invocation
             if is_context_handler(self.fallback):
                 res = self.fallback(ctx)
             else:
-                # Ordinary business fallback: pass original args/kwargs
-                sig = inspect.signature(self.fallback)
-                if "exc" in sig.parameters and "exc" not in kwargs:
+                has_exc_param = False
+                try:
+                    sig = inspect.signature(self.fallback)
+                    has_exc_param = "exc" in sig.parameters and "exc" not in kwargs
+                except (ValueError, TypeError):
+                    has_exc_param = False
+
+                if has_exc_param:
                     res = self.fallback(*args, exc=__flowguard_exc__, **kwargs)
                 else:
                     res = self.fallback(*args, **kwargs)

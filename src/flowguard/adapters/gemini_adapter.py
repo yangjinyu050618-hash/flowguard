@@ -20,6 +20,13 @@ class ResilientGemini:
     Transparent rate-limited, retry-protected and fallback-enabled wrapper around Google GenAI client.
 
     Requires an asynchronous Google GenAI client (e.g. client.aio.models.generate_content or client.generate_content_async).
+
+    Retry Boundary & Sole Ownership:
+    -------------------------------
+    FlowGuard manages the outer resilience pipeline, exponential backoff, circuit breaking, and dual RPM/TPM
+    quota accounting. When initializing the Google GenAI client (`google.genai.Client`), do not configure
+    additional retry policies (e.g. leave `http_options` at default or set `retry=None`) so that FlowGuard
+    remains the sole retry owner, preventing duplicate unmetered requests.
     """
 
     def __init__(
@@ -34,7 +41,6 @@ class ResilientGemini:
         fallback: Optional[Callable[..., Any]] = None,
         fatal_exceptions: Tuple[Type[Exception], ...] = DEFAULT_FATAL_EXCEPTIONS,
     ) -> None:
-        # P2-1: Fail-fast verification of async client interface
         has_aio = hasattr(client, "aio") and hasattr(client.aio, "models")
         has_async_gen = hasattr(client, "generate_content_async")
         if not (has_aio or has_async_gen):

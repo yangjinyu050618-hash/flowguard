@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import inspect
 import logging
 from types import MappingProxyType
+import typing
 from typing import Any, Callable, Dict, Mapping, Tuple
 from flowguard.exceptions import FlowGuardError
 
@@ -33,7 +34,6 @@ class FallbackContext:
     pipeline_name: str
 
     def __post_init__(self) -> None:
-        # Guarantee true runtime immutability via MappingProxyType
         if not isinstance(self.kwargs, MappingProxyType):
             object.__setattr__(self, "kwargs", MappingProxyType(dict(self.kwargs)))
 
@@ -45,21 +45,42 @@ def with_fallback_context(func: Callable[..., Any]) -> Callable[..., Any]:
 
 
 def is_context_handler(func: Callable[..., Any]) -> bool:
-    """Check if a callable explicitly expects FallbackContext via annotation, attribute, or ChoiceFallback type."""
+    """
+    Check if a callable explicitly expects FallbackContext via annotation, attribute, or ChoiceFallback type.
+    Supports standard annotations, typing.get_type_hints(), and 'from __future__ import annotations' string hints.
+    """
     if isinstance(func, ChoiceFallback):
         return True
     if getattr(func, "__flowguard_context_handler__", False):
         return True
+
+    # 1. Try typing.get_type_hints (resolves string forward refs)
+    try:
+        hints = typing.get_type_hints(func)
+        for hint in hints.values():
+            if hint is FallbackContext or getattr(hint, "__name__", "") == "FallbackContext":
+                return True
+    except Exception:
+        pass
+
+    # 2. Inspect raw parameter annotations (supports class object, __name__, and deferred str annotations)
     try:
         sig = inspect.signature(func)
         for param in sig.parameters.values():
-            if (
-                param.annotation is FallbackContext
-                or getattr(param.annotation, "__name__", "") == "FallbackContext"
+            ann = param.annotation
+            if ann is FallbackContext:
+                return True
+            if getattr(ann, "__name__", "") == "FallbackContext":
+                return True
+            if isinstance(ann, str) and (
+                ann == "FallbackContext"
+                or ann.endswith(".FallbackContext")
+                or ann.endswith("FallbackContext")
             ):
                 return True
     except (ValueError, TypeError):
         pass
+
     return False
 
 
@@ -91,7 +112,6 @@ class ChoiceFallback:
             raise ValueError("ChoiceFallback requires at least one candidate fallback route")
         if not callable(selector):
             raise TypeError("ChoiceFallback requires a callable selector(context, options)")
-        # Freeze candidate mapping snapshot
         self._candidates: Dict[str, Callable[..., Any]] = dict(candidates)
         self._selector = selector
 
@@ -138,18 +158,20 @@ class ChoiceFallback:
         target_func = self._candidates[selected_key]
         logger.info("Executing chosen fallback route: %s", selected_key)
 
-        # Check if candidate explicitly expects FallbackContext or original args
+        # P1 Fix: Separate static signature inspection from execution completely (no invocation in try/except)
         if is_context_handler(target_func):
             res = target_func(ctx)
         else:
-            # Bind to original args/kwargs without parameter name guessing
+            has_exc_param = False
             try:
                 sig = inspect.signature(target_func)
-                if "exc" in sig.parameters and "exc" not in ctx.kwargs:
-                    res = target_func(*ctx.args, exc=ctx.exception, **ctx.kwargs)
-                else:
-                    res = target_func(*ctx.args, **ctx.kwargs)
+                has_exc_param = "exc" in sig.parameters and "exc" not in ctx.kwargs
             except (ValueError, TypeError):
+                has_exc_param = False
+
+            if has_exc_param:
+                res = target_func(*ctx.args, exc=ctx.exception, **ctx.kwargs)
+            else:
                 res = target_func(*ctx.args, **ctx.kwargs)
 
         if inspect.isawaitable(res):

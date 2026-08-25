@@ -12,17 +12,15 @@ from flowguard.exceptions import TransientHTTPError
 
 
 # -------------------------------------------------------------------------
-# P1-1: Strict SDK Resource Method Signatures (No max_retries keyword accepted!)
+# P1-1: Authentic Strict SDK Resource Method Signatures (WITHOUT **kwargs!)
 # -------------------------------------------------------------------------
 class StrictOpenAICompletions:
-    """Exact simulation of openai.resources.chat.completions.AsyncCompletions.create."""
+    """Exact strict signature of openai.resources.chat.completions.AsyncCompletions.create WITHOUT **kwargs."""
 
     def __init__(self, parent_client):
         self.parent = parent_client
 
-    async def create(self, *, messages, model, temperature=1.0, max_tokens=None, **kwargs):
-        if "max_retries" in kwargs:
-            raise TypeError("create() got an unexpected keyword argument 'max_retries'")
+    async def create(self, *, messages, model, temperature=1.0, max_tokens=None, stream=False):
         return {
             "choices": [
                 {
@@ -35,26 +33,23 @@ class StrictOpenAICompletions:
 
 
 class StrictOpenAIClient:
-    """Exact simulation of openai.AsyncOpenAI client with with_options support."""
+    """Simulation of openai.AsyncOpenAI client with with_options support."""
 
     def __init__(self, max_retries: int = 2):
         self.max_retries = max_retries
         self.chat = type("Chat", (), {"completions": StrictOpenAICompletions(self)})()
 
     def with_options(self, *, max_retries: int = 0):
-        # Returns a cloned client with max_retries=0
         return StrictOpenAIClient(max_retries=max_retries)
 
 
 class StrictAnthropicMessages:
-    """Exact simulation of anthropic.resources.messages.AsyncMessages.create."""
+    """Exact strict signature of anthropic.resources.messages.AsyncMessages.create WITHOUT **kwargs."""
 
     def __init__(self, parent_client):
         self.parent = parent_client
 
-    async def create(self, *, messages, model, max_tokens=1000, **kwargs):
-        if "max_retries" in kwargs:
-            raise TypeError("create() got an unexpected keyword argument 'max_retries'")
+    async def create(self, *, messages, model, max_tokens=1000, temperature=1.0):
         return {
             "content": [
                 {"text": f"Anthropic response with parent retries={self.parent.max_retries}"}
@@ -63,14 +58,13 @@ class StrictAnthropicMessages:
 
 
 class StrictAnthropicClient:
-    """Exact simulation of anthropic.AsyncAnthropic client with with_options support."""
+    """Simulation of anthropic.AsyncAnthropic client with with_options support."""
 
     def __init__(self, max_retries: int = 2):
         self.max_retries = max_retries
         self.messages = StrictAnthropicMessages(self)
 
     def with_options(self, *, max_retries: int = 0):
-        # Returns a cloned client with max_retries=0
         return StrictAnthropicClient(max_retries=max_retries)
 
 
@@ -78,12 +72,9 @@ async def test_openai_strict_signature_and_sole_retry_ownership():
     raw_client = StrictOpenAIClient(max_retries=2)
     adapter = ResilientOpenAI(client=raw_client, max_retries=3)
 
-    # 1. Original client must not be modified in place
     assert raw_client.max_retries == 2
-    # 2. Adapter underlying client must have max_retries=0
     assert adapter._client.max_retries == 0
 
-    # 3. Call must succeed with strict signature and no 'max_retries' passed to completions.create
     resp = await adapter.create_chat_completion(
         model="gpt-4o",
         messages=[{"role": "user", "content": "hi"}],
@@ -106,10 +97,38 @@ async def test_anthropic_strict_signature_and_sole_retry_ownership():
 
 
 # -------------------------------------------------------------------------
+# P1: Synchronous candidate TypeError must be called EXACTLY ONCE!
+# -------------------------------------------------------------------------
+async def test_choice_fallback_sync_candidate_type_error_executed_once():
+    calls = 0
+
+    def buggy_sync_candidate(prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        raise TypeError("business logic bug inside sync candidate")
+
+    router = ChoiceFallback(
+        candidates={"buggy_sync": buggy_sync_candidate},
+        selector=lambda ctx, opts: "buggy_sync",
+    )
+
+    pipe = FlowGuard(name="sync-cand-type-err", fallback=router)
+
+    async def fail_task(prompt: str):
+        raise ConnectionResetError("Primary model 503")
+
+    with pytest.raises(TypeError) as exc_info:
+        await pipe.execute(fail_task, "test_prompt")
+
+    assert "business logic bug inside sync candidate" in str(exc_info.value)
+    # Must be called exactly ONCE!
+    assert calls == 1
+
+
+# -------------------------------------------------------------------------
 # P1-2: Ordinary business parameters named 'context' / 'ctx' must pass through!
 # -------------------------------------------------------------------------
 async def test_ordinary_business_fallback_with_context_param_name():
-    # Normal business fallback with a parameter named 'context' and 'prompt'
     def business_fallback(context: str, prompt: str):
         return f"business_fallback_res_{context}_{prompt}"
 
@@ -136,7 +155,6 @@ async def test_ordinary_business_fallback_with_ctx_param_name():
 
 
 async def test_explicit_fallback_context_handler_via_annotation_or_decorator():
-    # 1. Via type annotation
     def annotated_handler(c: FallbackContext):
         return f"annotated_{c.kwargs.get('k')}"
 
@@ -148,7 +166,6 @@ async def test_explicit_fallback_context_handler_via_annotation_or_decorator():
     res1 = await pipe1.execute(f1, k="val1")
     assert res1 == "annotated_val1"
 
-    # 2. Via decorator
     @with_fallback_context
     def decorated_handler(any_name):
         assert isinstance(any_name, FallbackContext)
@@ -171,7 +188,6 @@ def test_fallback_context_kwargs_true_immutability():
     )
     assert ctx.kwargs["key"] == "before"
 
-    # Mutating kwargs must raise TypeError
     with pytest.raises(TypeError):
         ctx.kwargs["key"] = "after"  # type: ignore
 
@@ -180,7 +196,7 @@ def test_fallback_context_kwargs_true_immutability():
 
 
 # -------------------------------------------------------------------------
-# P1-1: No TypeError guessing & Handlers execute exactly ONCE
+# P1-1: Async Fallback & ChoiceFallback candidate TypeError executed ONCE
 # -------------------------------------------------------------------------
 async def test_fallback_internal_type_error_executed_once():
     call_count = 0

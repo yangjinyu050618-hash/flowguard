@@ -129,6 +129,8 @@ claude_client = ResilientAnthropic(raw_anthropic, rpm_limit=300.0, tpm_limit=40_
 gemini_client = ResilientGemini(raw_gemini, rpm_limit=300.0, tpm_limit=60_000.0)
 ```
 
+> **Note on Retry Ownership**: FlowGuard manages end-to-end retry policies, backoff, and RPM/TPM token reservation as the sole retry owner. Underlying SDK retries are automatically disabled (`max_retries=0` via `with_options` for OpenAI & Anthropic; keep default `http_options` for Google GenAI) so physical requests match metered attempts.
+
 ---
 
 ## 🔀 Interactive Human-in-the-Loop Fallback (`ChoiceFallback`)

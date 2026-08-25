@@ -10,6 +10,7 @@ from flowguard.core.limiter import BaseRateLimiter, TokenBucketLimiter
 from flowguard.core.circuit_breaker import CircuitBreaker
 from flowguard.core.retry import RetryPolicy
 from flowguard.core.bulkhead import Bulkhead
+from flowguard.core.fallback import FallbackContext
 from flowguard.exceptions import CircuitBreakerOpenError, BulkheadFullError
 from flowguard.metrics.collector import MetricsCollector
 
@@ -44,28 +45,44 @@ class FlowGuard:
         self.fallback = fallback
         self.metrics = metrics or MetricsCollector(name=name)
 
-    async def _handle_fallback(self, exc: BaseException, *args: Any, **kwargs: Any) -> Any:
-        if self.fallback is not None:
-            try:
-                try:
-                    sig = inspect.signature(self.fallback)
-                    call_kwargs = dict(kwargs)
-                    if "exc" in sig.parameters:
-                        call_kwargs["exc"] = exc
-                    res = self.fallback(*args, **call_kwargs)
-                except TypeError:
-                    try:
-                        res = self.fallback(exc)
-                    except TypeError:
-                        res = self.fallback()
+    async def _handle_fallback(
+        self, __flowguard_exc__: BaseException, *args: Any, **kwargs: Any
+    ) -> Any:
+        if self.fallback is None:
+            raise __flowguard_exc__
 
-                if inspect.isawaitable(res):
-                    return await res
-                return res
-            except Exception as fb_exc:
-                logger.exception("[%s] Fallback handler failed: %s", self.name, fb_exc)
-                raise fb_exc from exc
-        raise exc
+        ctx = FallbackContext(
+            exception=__flowguard_exc__,
+            args=args,
+            kwargs=dict(kwargs),
+            pipeline_name=self.name,
+        )
+
+        try:
+            # P1-1: Determine invocation contract statically via inspect.signature ONCE
+            sig = inspect.signature(self.fallback)
+            params = sig.parameters
+
+            if (
+                "context" in params
+                or "ctx" in params
+                or (len(params) == 1 and list(params.keys())[0] in ("context", "ctx"))
+            ):
+                res = self.fallback(ctx)
+            elif "exc" in params and "exc" not in kwargs:
+                # Legacy fallback with exc keyword
+                res = self.fallback(*args, exc=__flowguard_exc__, **kwargs)
+            else:
+                # Pass original args and kwargs without collision (P1-2)
+                res = self.fallback(*args, **kwargs)
+
+            if inspect.isawaitable(res):
+                return await res
+            return res
+        except Exception as fb_exc:
+            logger.exception("[%s] Fallback execution failed: %s", self.name, fb_exc)
+            # P1-1: Preserve exception chain and do not retry handler
+            raise fb_exc from __flowguard_exc__
 
     async def execute(
         self, func: Callable[..., Coroutine[Any, Any, Any]], *args: Any, **kwargs: Any

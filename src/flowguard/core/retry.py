@@ -15,15 +15,19 @@ def is_permanent_client_error(exc: BaseException) -> bool:
     if isinstance(exc, (FlowGuardError, PermanentHTTPError)):
         return True
 
-    # 2. HTTP status code inspection (e.g. OpenAI APIStatusError, httpx.HTTPStatusError)
-    status_code = getattr(exc, "status_code", None)
-    if isinstance(status_code, int):
-        if 400 <= status_code < 500 and status_code != 429:
+    # 2. HTTP status code inspection (supports .status_code and Google GenAI .code)
+    code = getattr(exc, "status_code", None)
+    if code is None:
+        code = getattr(exc, "code", None)
+
+    if isinstance(code, int):
+        # 4xx client errors (excluding 408 Request Timeout, 409 Conflict, 429 Rate Limit)
+        if 400 <= code < 500 and code not in (408, 409, 429):
             return True
-        if status_code == 429 or 500 <= status_code < 600:
+        if code in (408, 409, 429) or 500 <= code < 600:
             return False
 
-    # 3. Class name patterns for authentication / bad request in API SDKs
+    # 3. Class name patterns for authentication / bad request in API SDKs (OpenAI, Anthropic, Google)
     name = type(exc).__name__
     if name in {
         "AuthenticationError",
@@ -32,6 +36,10 @@ def is_permanent_client_error(exc: BaseException) -> bool:
         "BadRequestError",
         "UnprocessableEntityError",
         "InvalidRequestError",
+        "InvalidArgument",
+        "PermissionDenied",
+        "Unauthenticated",
+        "NotFound",
     }:
         return True
 

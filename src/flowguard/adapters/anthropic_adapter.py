@@ -18,6 +18,9 @@ DEFAULT_FATAL_EXCEPTIONS: Tuple[Type[Exception], ...] = (
 class ResilientAnthropic:
     """
     Transparent rate-limited, retry-protected and fallback-enabled wrapper around Anthropic AsyncAnthropic client.
+
+    FlowGuard acts as the sole retry and rate limiting owner. Downstream SDK internal retries
+    are disabled (max_retries=0) to guarantee strict token accounting and predictable attempt multipliers.
     """
 
     def __init__(
@@ -74,6 +77,11 @@ class ResilientAnthropic:
                 await self.tpm_limiter.acquire(
                     tokens=float(estimated_tokens), timeout=self.acquire_timeout
                 )
-            return await self._client.messages.create(**call_kw)
+            req_kw = dict(call_kw)
+            # P1-4: Establish FlowGuard as sole retry owner by disabling downstream SDK retries
+            req_kw.setdefault("max_retries", 0)
+            req_kw.pop("estimated_tokens", None)
+            return await self._client.messages.create(**req_kw)
 
-        return await self.pipeline.execute(_call, **kwargs)
+        # Preserve estimated_tokens in kwargs for fallback context (P1-2)
+        return await self.pipeline.execute(_call, estimated_tokens=estimated_tokens, **kwargs)

@@ -18,6 +18,9 @@ DEFAULT_FATAL_EXCEPTIONS: Tuple[Type[Exception], ...] = (
 class ResilientOpenAI:
     """
     Transparent rate-limited, retry-protected and fallback-enabled wrapper around OpenAI AsyncClient.
+
+    FlowGuard acts as the sole retry and rate limiting owner. Downstream SDK internal retries
+    are disabled (max_retries=0) to guarantee strict token accounting.
     """
 
     def __init__(
@@ -74,6 +77,10 @@ class ResilientOpenAI:
                 await self.tpm_limiter.acquire(
                     tokens=float(estimated_tokens), timeout=self.acquire_timeout
                 )
-            return await self._client.chat.completions.create(**call_kw)
+            req_kw = dict(call_kw)
+            # P1-4: Disable downstream SDK retries to maintain FlowGuard as sole retry owner
+            req_kw.setdefault("max_retries", 0)
+            req_kw.pop("estimated_tokens", None)
+            return await self._client.chat.completions.create(**req_kw)
 
-        return await self.pipeline.execute(_call, **kwargs)
+        return await self.pipeline.execute(_call, estimated_tokens=estimated_tokens, **kwargs)

@@ -13,7 +13,7 @@ import sys
 # Allow running directly from repo root
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src")))
 
-from flowguard import guard, ChoiceFallback
+from flowguard import guard, ChoiceFallback, FallbackContext
 
 
 # Define Candidate Alternate Models
@@ -33,11 +33,13 @@ async def call_gemini_flash(prompt: str) -> str:
 
 
 # Interactive Selector Callback (queries user / UI / agent)
-async def ask_user_for_model_choice(exc: Exception, available_options: list[str]) -> str:
+async def ask_user_for_model_choice(ctx: FallbackContext, available_options: list[str]) -> str:
+    exc = ctx.exception
     print(f"\n[FlowGuard Decision Trigger] Primary model failed with: {type(exc).__name__} ({exc})")
-    print(f"Available fallback options: {available_options}")
+    print(f"Request prompt: '{ctx.args[0]}'")
+    print(f"Available fallback options: {available_options} (or return None to abort)")
 
-    # In a real CLI: choice = input("Please select a candidate or type 'abort': ")
+    # In a real CLI: choice = input("Please select a candidate or press Enter to abort: ") or None
     # In a Web App: await websocket_user_selection_modal(...)
     # For automated demo: select 'deepseek-r1'
     simulated_choice = "deepseek-r1"

@@ -18,6 +18,8 @@ DEFAULT_FATAL_EXCEPTIONS: Tuple[Type[Exception], ...] = (
 class ResilientGemini:
     """
     Transparent rate-limited, retry-protected and fallback-enabled wrapper around Google GenAI client.
+
+    Requires an asynchronous Google GenAI client (e.g. client.aio.models.generate_content or client.generate_content_async).
     """
 
     def __init__(
@@ -32,6 +34,14 @@ class ResilientGemini:
         fallback: Optional[Callable[..., Any]] = None,
         fatal_exceptions: Tuple[Type[Exception], ...] = DEFAULT_FATAL_EXCEPTIONS,
     ) -> None:
+        # P2-1: Fail-fast verification of async client interface
+        has_aio = hasattr(client, "aio") and hasattr(client.aio, "models")
+        has_async_gen = hasattr(client, "generate_content_async")
+        if not (has_aio or has_async_gen):
+            raise TypeError(
+                "ResilientGemini requires an asynchronous client (e.g. client.aio.models.generate_content or client.generate_content_async). For synchronous models, use client.aio."
+            )
+
         self._client = client
         self.acquire_timeout = acquire_timeout
 
@@ -79,11 +89,13 @@ class ResilientGemini:
             kw = dict(call_kw)
             m = kw.pop("model", model)
             c = kw.pop("contents", contents)
+            kw.pop("estimated_tokens", None)
+
             if hasattr(self._client, "aio") and hasattr(self._client.aio, "models"):
                 return await self._client.aio.models.generate_content(model=m, contents=c, **kw)
-            elif hasattr(self._client, "generate_content_async"):
-                return await self._client.generate_content_async(c, **kw)
             else:
-                return await self._client.models.generate_content(model=m, contents=c, **kw)
+                return await self._client.generate_content_async(c, **kw)
 
-        return await self.pipeline.execute(_call, model=model, contents=contents, **kwargs)
+        return await self.pipeline.execute(
+            _call, model=model, contents=contents, estimated_tokens=estimated_tokens, **kwargs
+        )

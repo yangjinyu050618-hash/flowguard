@@ -34,6 +34,7 @@ from flowguard.core.pipeline import (
     guard,
 )
 from flowguard.core.fallback import (
+    FallbackContext,
     ChoiceFallback,
 )
 from flowguard.metrics.collector import (
@@ -62,6 +63,7 @@ __all__ = [
     "Bulkhead",
     "FlowGuard",
     "guard",
+    "FallbackContext",
     "ChoiceFallback",
     "MetricsCollector",
 ]

@@ -5,7 +5,7 @@ import pytest
 from flowguard.core.pipeline import FlowGuard, guard
 from flowguard.core.circuit_breaker import CircuitBreaker, CircuitState
 from flowguard.core.retry import RetryPolicy, ExponentialBackoff
-from flowguard.core.fallback import ChoiceFallback
+from flowguard.core.fallback import FallbackContext, ChoiceFallback
 
 
 async def test_fallback_on_circuit_breaker_open():
@@ -25,7 +25,6 @@ async def test_fallback_on_circuit_breaker_open():
     async def call_api(query: str):
         return f"live_{query}"
 
-    # Circuit is open, should gracefully degrade to fallback
     res = await pipe.execute(call_api, "user_question")
     assert res == "cached_response_for_user_question"
 
@@ -51,7 +50,7 @@ async def test_fallback_on_retry_exhaustion():
 
 async def test_fallback_decorator_integration():
     def backup_calculator(a: int, b: int, exc: Exception = None):
-        return a + b  # Fallback logic
+        return a + b
 
     @guard(
         name="calc-guard",
@@ -61,7 +60,6 @@ async def test_fallback_decorator_integration():
     async def faulty_remote_calc(a: int, b: int) -> int:
         raise TimeoutError("Remote server timed out")
 
-    # Should execute fallback and return 10 + 20 = 30
     res = await faulty_remote_calc(10, 20)
     assert res == 30
 
@@ -86,7 +84,6 @@ async def test_fallback_cancellation_does_not_trigger_fallback():
     with pytest.raises(asyncio.CancelledError):
         await task
 
-    # Cancellation must propagate and NOT trigger fallback
     assert fallback_called is False
 
 
@@ -99,9 +96,10 @@ async def test_choice_fallback_interactive_selection():
 
     selected = "gemini"
 
-    def user_selector(exc: Exception, options: list):
+    def user_selector(ctx: FallbackContext, options: list):
         assert "claude" in options
         assert "gemini" in options
+        assert isinstance(ctx.exception, ConnectionResetError)
         return selected
 
     router = ChoiceFallback(
@@ -114,37 +112,24 @@ async def test_choice_fallback_interactive_selection():
     async def broken_gpt(prompt: str):
         raise ConnectionResetError("GPT outage")
 
-    # When user selects 'gemini'
+    # 1. User selects 'gemini'
     res = await pipe.execute(broken_gpt, "hello")
     assert res == "gemini_solved_hello"
 
-    # When user selects 'abort'
-    selected = "abort"
+    # 2. User returns None -> clean cancellation / re-raise original
+    selected = None
     with pytest.raises(ConnectionResetError):
         await pipe.execute(broken_gpt, "hello")
 
-    # Invalid choice raises KeyError
+    # 3. Invalid candidate choice raises KeyError
     selected = "non_existent_model"
     with pytest.raises(KeyError):
         await pipe.execute(broken_gpt, "hello")
 
 
-async def test_choice_fallback_no_selector_and_empty():
+def test_choice_fallback_validation():
     with pytest.raises(ValueError):
-        ChoiceFallback(candidates={})
+        ChoiceFallback(candidates={}, selector=lambda ctx, opt: None)
 
-    # Default to first option if selector is None
-    auto_router = ChoiceFallback(candidates={"first_choice": lambda prompt: f"first_{prompt}"})
-    res = await auto_router("test")
-    assert res == "first_test"
-
-    # Async selector with 1 argument
-    async def single_arg_selector(options):
-        return options[0]
-
-    async_router = ChoiceFallback(
-        candidates={"opt1": lambda x: f"opt_{x}"},
-        selector=single_arg_selector,
-    )
-    res2 = await async_router("hi")
-    assert res2 == "opt_hi"
+    with pytest.raises(TypeError):
+        ChoiceFallback(candidates={"a": lambda: 1}, selector=None)  # type: ignore

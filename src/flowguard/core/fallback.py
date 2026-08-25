@@ -3,7 +3,8 @@
 from dataclasses import dataclass
 import inspect
 import logging
-from typing import Any, Callable, Dict, Mapping, Optional, Tuple
+from types import MappingProxyType
+from typing import Any, Callable, Dict, Mapping, Tuple
 from flowguard.exceptions import FlowGuardError
 
 logger = logging.getLogger("flowguard.fallback")
@@ -12,7 +13,7 @@ logger = logging.getLogger("flowguard.fallback")
 @dataclass(frozen=True)
 class FallbackContext:
     """
-    Immutable context describing the failed execution attempt passed to fallback handlers.
+    Truly immutable context describing the failed execution attempt passed to fallback handlers.
 
     Attributes
     ----------
@@ -21,7 +22,7 @@ class FallbackContext:
     args : Tuple[Any, ...]
         The positional arguments passed to the original function call.
     kwargs : Mapping[str, Any]
-        The keyword arguments passed to the original function call.
+        The immutable keyword arguments passed to the original function call.
     pipeline_name : str
         The name of the FlowGuard pipeline executing the call.
     """
@@ -30,6 +31,36 @@ class FallbackContext:
     args: Tuple[Any, ...]
     kwargs: Mapping[str, Any]
     pipeline_name: str
+
+    def __post_init__(self) -> None:
+        # Guarantee true runtime immutability via MappingProxyType
+        if not isinstance(self.kwargs, MappingProxyType):
+            object.__setattr__(self, "kwargs", MappingProxyType(dict(self.kwargs)))
+
+
+def with_fallback_context(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Decorator to explicitly mark a fallback function as expecting a FallbackContext as its single argument."""
+    setattr(func, "__flowguard_context_handler__", True)
+    return func
+
+
+def is_context_handler(func: Callable[..., Any]) -> bool:
+    """Check if a callable explicitly expects FallbackContext via annotation, attribute, or ChoiceFallback type."""
+    if isinstance(func, ChoiceFallback):
+        return True
+    if getattr(func, "__flowguard_context_handler__", False):
+        return True
+    try:
+        sig = inspect.signature(func)
+        for param in sig.parameters.values():
+            if (
+                param.annotation is FallbackContext
+                or getattr(param.annotation, "__name__", "") == "FallbackContext"
+            ):
+                return True
+    except (ValueError, TypeError):
+        pass
+    return False
 
 
 class ChoiceFallback:
@@ -60,7 +91,7 @@ class ChoiceFallback:
             raise ValueError("ChoiceFallback requires at least one candidate fallback route")
         if not callable(selector):
             raise TypeError("ChoiceFallback requires a callable selector(context, options)")
-        # Freeze candidate mapping snapshot (P2-2)
+        # Freeze candidate mapping snapshot
         self._candidates: Dict[str, Callable[..., Any]] = dict(candidates)
         self._selector = selector
 
@@ -69,13 +100,8 @@ class ChoiceFallback:
         """Return a copy of the candidate route dictionary."""
         return dict(self._candidates)
 
-    async def __call__(
-        self, context: Optional[FallbackContext] = None, *args: Any, **kwargs: Any
-    ) -> Any:
-        # Extract or construct FallbackContext (P1-2)
-        if isinstance(context, FallbackContext):
-            ctx = context
-        else:
+    async def __call__(self, context: FallbackContext, *args: Any, **kwargs: Any) -> Any:
+        if not isinstance(context, FallbackContext):
             exc = kwargs.pop("__flowguard_exc__", None) or FlowGuardError("Primary service failed")
             actual_args = (context, *args) if context is not None else args
             ctx = FallbackContext(
@@ -84,10 +110,12 @@ class ChoiceFallback:
                 kwargs=kwargs,
                 pipeline_name="choice-fallback",
             )
+        else:
+            ctx = context
 
         options = list(self._candidates.keys())
 
-        # Execute selector with explicit context and options (P1-1: single execution, no TypeError guessing)
+        # Execute selector with explicit context and options
         try:
             choice_res = self._selector(ctx, options)
             if inspect.isawaitable(choice_res):
@@ -98,7 +126,6 @@ class ChoiceFallback:
             logger.exception("Error in ChoiceFallback selector: %s", select_err)
             raise select_err from ctx.exception
 
-        # P2-2: None explicitly signals user cancellation
         if selected_key is None:
             logger.info("Fallback execution cancelled by user decision (selector returned None).")
             raise ctx.exception
@@ -111,19 +138,19 @@ class ChoiceFallback:
         target_func = self._candidates[selected_key]
         logger.info("Executing chosen fallback route: %s", selected_key)
 
-        # Inspect target signature statically once (P1-1)
-        sig = inspect.signature(target_func)
-        params = sig.parameters
-
-        if (
-            "context" in params
-            or "ctx" in params
-            or (len(params) == 1 and list(params.keys())[0] in ("context", "ctx"))
-        ):
+        # Check if candidate explicitly expects FallbackContext or original args
+        if is_context_handler(target_func):
             res = target_func(ctx)
         else:
-            # Bind to original args/kwargs
-            res = target_func(*ctx.args, **ctx.kwargs)
+            # Bind to original args/kwargs without parameter name guessing
+            try:
+                sig = inspect.signature(target_func)
+                if "exc" in sig.parameters and "exc" not in ctx.kwargs:
+                    res = target_func(*ctx.args, exc=ctx.exception, **ctx.kwargs)
+                else:
+                    res = target_func(*ctx.args, **ctx.kwargs)
+            except (ValueError, TypeError):
+                res = target_func(*ctx.args, **ctx.kwargs)
 
         if inspect.isawaitable(res):
             return await res

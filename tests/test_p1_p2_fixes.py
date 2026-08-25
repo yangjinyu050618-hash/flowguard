@@ -1,13 +1,182 @@
-"""Comprehensive regression test suite for P1 and P2 review fixes."""
+"""Comprehensive regression test suite for P1 and P2 review fixes with strict signatures."""
 
 import asyncio
 import pytest
 from flowguard.core.pipeline import FlowGuard
-from flowguard.core.fallback import FallbackContext, ChoiceFallback
+from flowguard.core.fallback import FallbackContext, ChoiceFallback, with_fallback_context
 from flowguard.core.retry import is_permanent_client_error
 from flowguard.adapters.anthropic_adapter import ResilientAnthropic
 from flowguard.adapters.gemini_adapter import ResilientGemini
+from flowguard.adapters.openai_adapter import ResilientOpenAI
 from flowguard.exceptions import TransientHTTPError
+
+
+# -------------------------------------------------------------------------
+# P1-1: Strict SDK Resource Method Signatures (No max_retries keyword accepted!)
+# -------------------------------------------------------------------------
+class StrictOpenAICompletions:
+    """Exact simulation of openai.resources.chat.completions.AsyncCompletions.create."""
+
+    def __init__(self, parent_client):
+        self.parent = parent_client
+
+    async def create(self, *, messages, model, temperature=1.0, max_tokens=None, **kwargs):
+        if "max_retries" in kwargs:
+            raise TypeError("create() got an unexpected keyword argument 'max_retries'")
+        return {
+            "choices": [
+                {
+                    "message": {
+                        "content": f"OpenAI response with parent retries={self.parent.max_retries}"
+                    }
+                }
+            ]
+        }
+
+
+class StrictOpenAIClient:
+    """Exact simulation of openai.AsyncOpenAI client with with_options support."""
+
+    def __init__(self, max_retries: int = 2):
+        self.max_retries = max_retries
+        self.chat = type("Chat", (), {"completions": StrictOpenAICompletions(self)})()
+
+    def with_options(self, *, max_retries: int = 0):
+        # Returns a cloned client with max_retries=0
+        return StrictOpenAIClient(max_retries=max_retries)
+
+
+class StrictAnthropicMessages:
+    """Exact simulation of anthropic.resources.messages.AsyncMessages.create."""
+
+    def __init__(self, parent_client):
+        self.parent = parent_client
+
+    async def create(self, *, messages, model, max_tokens=1000, **kwargs):
+        if "max_retries" in kwargs:
+            raise TypeError("create() got an unexpected keyword argument 'max_retries'")
+        return {
+            "content": [
+                {"text": f"Anthropic response with parent retries={self.parent.max_retries}"}
+            ]
+        }
+
+
+class StrictAnthropicClient:
+    """Exact simulation of anthropic.AsyncAnthropic client with with_options support."""
+
+    def __init__(self, max_retries: int = 2):
+        self.max_retries = max_retries
+        self.messages = StrictAnthropicMessages(self)
+
+    def with_options(self, *, max_retries: int = 0):
+        # Returns a cloned client with max_retries=0
+        return StrictAnthropicClient(max_retries=max_retries)
+
+
+async def test_openai_strict_signature_and_sole_retry_ownership():
+    raw_client = StrictOpenAIClient(max_retries=2)
+    adapter = ResilientOpenAI(client=raw_client, max_retries=3)
+
+    # 1. Original client must not be modified in place
+    assert raw_client.max_retries == 2
+    # 2. Adapter underlying client must have max_retries=0
+    assert adapter._client.max_retries == 0
+
+    # 3. Call must succeed with strict signature and no 'max_retries' passed to completions.create
+    resp = await adapter.create_chat_completion(
+        model="gpt-4o",
+        messages=[{"role": "user", "content": "hi"}],
+    )
+    assert "parent retries=0" in resp["choices"][0]["message"]["content"]
+
+
+async def test_anthropic_strict_signature_and_sole_retry_ownership():
+    raw_client = StrictAnthropicClient(max_retries=2)
+    adapter = ResilientAnthropic(client=raw_client, max_retries=3)
+
+    assert raw_client.max_retries == 2
+    assert adapter._client.max_retries == 0
+
+    resp = await adapter.create_message(
+        model="claude-3-5-sonnet",
+        messages=[{"role": "user", "content": "hi"}],
+    )
+    assert "parent retries=0" in resp["content"][0]["text"]
+
+
+# -------------------------------------------------------------------------
+# P1-2: Ordinary business parameters named 'context' / 'ctx' must pass through!
+# -------------------------------------------------------------------------
+async def test_ordinary_business_fallback_with_context_param_name():
+    # Normal business fallback with a parameter named 'context' and 'prompt'
+    def business_fallback(context: str, prompt: str):
+        return f"business_fallback_res_{context}_{prompt}"
+
+    pipe = FlowGuard(name="business-ctx-pipe", fallback=business_fallback)
+
+    async def fail_task(context: str, prompt: str):
+        raise RuntimeError("fail")
+
+    res = await pipe.execute(fail_task, "user_context_val", prompt="user_prompt_val")
+    assert res == "business_fallback_res_user_context_val_user_prompt_val"
+
+
+async def test_ordinary_business_fallback_with_ctx_param_name():
+    def business_fallback_ctx(ctx: str, *, user_id: int):
+        return f"res_{ctx}_{user_id}"
+
+    pipe = FlowGuard(name="business-ctx2", fallback=business_fallback_ctx)
+
+    async def fail_task(ctx: str, *, user_id: int):
+        raise RuntimeError("fail")
+
+    res = await pipe.execute(fail_task, "my_ctx_data", user_id=42)
+    assert res == "res_my_ctx_data_42"
+
+
+async def test_explicit_fallback_context_handler_via_annotation_or_decorator():
+    # 1. Via type annotation
+    def annotated_handler(c: FallbackContext):
+        return f"annotated_{c.kwargs.get('k')}"
+
+    pipe1 = FlowGuard(name="annotated-pipe", fallback=annotated_handler)
+
+    async def f1(k: str):
+        raise RuntimeError("err")
+
+    res1 = await pipe1.execute(f1, k="val1")
+    assert res1 == "annotated_val1"
+
+    # 2. Via decorator
+    @with_fallback_context
+    def decorated_handler(any_name):
+        assert isinstance(any_name, FallbackContext)
+        return f"decorated_{any_name.kwargs.get('k')}"
+
+    pipe2 = FlowGuard(name="dec-pipe", fallback=decorated_handler)
+    res2 = await pipe2.execute(f1, k="val2")
+    assert res2 == "decorated_val2"
+
+
+# -------------------------------------------------------------------------
+# P2: FallbackContext truly immutable (MappingProxyType)
+# -------------------------------------------------------------------------
+def test_fallback_context_kwargs_true_immutability():
+    ctx = FallbackContext(
+        exception=RuntimeError("test"),
+        args=(1, 2),
+        kwargs={"key": "before"},
+        pipeline_name="test-pipe",
+    )
+    assert ctx.kwargs["key"] == "before"
+
+    # Mutating kwargs must raise TypeError
+    with pytest.raises(TypeError):
+        ctx.kwargs["key"] = "after"  # type: ignore
+
+    with pytest.raises(TypeError):
+        ctx.kwargs["new_key"] = "val"  # type: ignore
 
 
 # -------------------------------------------------------------------------
@@ -16,10 +185,9 @@ from flowguard.exceptions import TransientHTTPError
 async def test_fallback_internal_type_error_executed_once():
     call_count = 0
 
-    def buggy_fallback(ctx: FallbackContext):
+    def buggy_fallback(c: FallbackContext):
         nonlocal call_count
         call_count += 1
-        # Internal business TypeError
         return "number: " + 123  # type: ignore
 
     pipe = FlowGuard(name="type-error-pipe", fallback=buggy_fallback)
@@ -31,7 +199,6 @@ async def test_fallback_internal_type_error_executed_once():
         await pipe.execute(fail_task)
 
     assert "can only concatenate str" in str(exc_info.value) or "must be str" in str(exc_info.value)
-    # Must be called exactly ONCE, NOT multiple times due to guessing!
     assert call_count == 1
 
 
@@ -61,7 +228,7 @@ async def test_choice_fallback_candidate_type_error_executed_once():
 
 
 # -------------------------------------------------------------------------
-# P1-2: FallbackContext & Parameter collision immunity
+# P1-2: Parameter collision immunity & token preservation
 # -------------------------------------------------------------------------
 async def test_fallback_with_caller_exc_keyword_collision():
     received_ctx = None
@@ -76,7 +243,6 @@ async def test_fallback_with_caller_exc_keyword_collision():
     async def task_with_exc_param(query: str, exc: str = "default_exc"):
         raise ValueError("Task failed")
 
-    # Call with exc="user_supplied_exc"
     res = await pipe.execute(task_with_exc_param, "my_query", exc="user_supplied_exc")
     assert res == "fallback_for_user_supplied_exc"
     assert received_ctx is not None
@@ -154,13 +320,11 @@ class MockGoogleGenAIClientError(Exception):
 
 
 def test_google_genai_error_classification():
-    # 400, 401, 403, 404 must be permanent
     assert is_permanent_client_error(MockGoogleGenAIClientError(400, "Bad Request")) is True
     assert is_permanent_client_error(MockGoogleGenAIClientError(401, "Unauthenticated")) is True
     assert is_permanent_client_error(MockGoogleGenAIClientError(403, "Permission Denied")) is True
     assert is_permanent_client_error(MockGoogleGenAIClientError(404, "Not Found")) is True
 
-    # 429, 500, 503 must be retryable
     assert is_permanent_client_error(MockGoogleGenAIClientError(429, "Resource Exhausted")) is False
     assert (
         is_permanent_client_error(MockGoogleGenAIClientError(500, "Internal Server Error")) is False
@@ -189,30 +353,7 @@ async def test_gemini_permanent_400_fail_fast():
     with pytest.raises(MockGoogleGenAIClientError):
         await adapter.generate_content(model="gemini-2.5-flash", contents="test")
 
-    # Must fail fast after exactly 1 call!
     assert calls == 1
-
-
-# -------------------------------------------------------------------------
-# P1-4: Sole Retry Owner (No SDK internal retry multiplication)
-# -------------------------------------------------------------------------
-async def test_sdk_max_retries_zero_enforced():
-    captured_kwargs = {}
-
-    class MockAnthropicMessages:
-        async def create(self, **kwargs):
-            nonlocal captured_kwargs
-            captured_kwargs = kwargs
-            return {"content": [{"text": "ok"}]}
-
-    class MockAnthropicClient:
-        messages = MockAnthropicMessages()
-
-    adapter = ResilientAnthropic(client=MockAnthropicClient(), max_retries=3)
-    await adapter.create_message(model="claude-3-5-sonnet", messages=[])
-
-    # Downstream SDK call must have max_retries=0 to prevent unmetered retries
-    assert captured_kwargs.get("max_retries") == 0
 
 
 # -------------------------------------------------------------------------
@@ -244,7 +385,6 @@ async def test_choice_fallback_candidate_freeze_and_none_sentinel():
         selector=lambda ctx, opts: "m1",
     )
 
-    # Mutate caller dict
     mutable_candidates["m1"] = lambda prompt, **kw: "mutated"
     mutable_candidates["m2"] = lambda prompt, **kw: "m2"
 
@@ -254,13 +394,11 @@ async def test_choice_fallback_candidate_freeze_and_none_sentinel():
         raise ConnectionError("down")
 
     res = await pipe.execute(fail_call, "test")
-    # Router must use frozen snapshot: "m1_test", not "mutated"
     assert res == "m1_test"
 
-    # None selector cancels fallback
     cancel_router = ChoiceFallback(
         candidates={"m1": lambda prompt, **kw: "m1"},
-        selector=lambda ctx, opts: None,  # User canceled
+        selector=lambda ctx, opts: None,
     )
     cancel_pipe = FlowGuard(name="cancel-pipe", fallback=cancel_router)
 

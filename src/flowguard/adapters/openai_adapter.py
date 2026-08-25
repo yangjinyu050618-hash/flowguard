@@ -19,8 +19,8 @@ class ResilientOpenAI:
     """
     Transparent rate-limited, retry-protected and fallback-enabled wrapper around OpenAI AsyncClient.
 
-    FlowGuard acts as the sole retry and rate limiting owner. Downstream SDK internal retries
-    are disabled (max_retries=0) to guarantee strict token accounting.
+    Disables client-level SDK retries (via with_options(max_retries=0)) to establish FlowGuard
+    as the sole retry and rate limiting owner without modifying the caller's shared client.
     """
 
     def __init__(
@@ -35,7 +35,12 @@ class ResilientOpenAI:
         fallback: Optional[Callable[..., Any]] = None,
         fatal_exceptions: Tuple[Type[Exception], ...] = DEFAULT_FATAL_EXCEPTIONS,
     ) -> None:
-        self._client = client
+        # P1-1: Establish FlowGuard as sole retry owner at client level using with_options without mutating input client
+        if hasattr(client, "with_options"):
+            self._client = client.with_options(max_retries=0)
+        else:
+            self._client = client
+
         self.acquire_timeout = acquire_timeout
 
         rpm_burst = rpm_burst_capacity or max(1.0, min(float(rpm_limit), float(rpm_limit) / 5.0))
@@ -78,9 +83,8 @@ class ResilientOpenAI:
                     tokens=float(estimated_tokens), timeout=self.acquire_timeout
                 )
             req_kw = dict(call_kw)
-            # P1-4: Disable downstream SDK retries to maintain FlowGuard as sole retry owner
-            req_kw.setdefault("max_retries", 0)
             req_kw.pop("estimated_tokens", None)
+            # P1-1: No max_retries passed into chat.completions.create (strict signature compliant)
             return await self._client.chat.completions.create(**req_kw)
 
         return await self.pipeline.execute(_call, estimated_tokens=estimated_tokens, **kwargs)

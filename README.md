@@ -136,11 +136,11 @@ gemini_client = ResilientGemini(raw_gemini, rpm_limit=300.0, tpm_limit=60_000.0)
 When a primary model trips or fails, `ChoiceFallback` prompts the user or decision engine to dynamically select a replacement model:
 
 ```python
-from flowguard import guard, ChoiceFallback
+from flowguard import guard, ChoiceFallback, FallbackContext
 
-async def ask_user_for_model(exc: Exception, available_options: list[str]) -> str:
+async def ask_user_for_model(context: FallbackContext, available_options: list[str]) -> str:
     # Query CLI prompt, Web UI modal, or agent decision engine
-    print(f"Primary model failed: {exc}. Choose fallback from {available_options}:")
+    print(f"Primary model failed: {context.exception}. Choose fallback from {available_options}:")
     return "deepseek-r1"
 
 router = ChoiceFallback(

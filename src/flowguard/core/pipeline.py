@@ -10,7 +10,7 @@ from flowguard.core.limiter import BaseRateLimiter, TokenBucketLimiter
 from flowguard.core.circuit_breaker import CircuitBreaker
 from flowguard.core.retry import RetryPolicy
 from flowguard.core.bulkhead import Bulkhead
-from flowguard.core.fallback import FallbackContext
+from flowguard.core.fallback import FallbackContext, is_context_handler
 from flowguard.exceptions import CircuitBreakerOpenError, BulkheadFullError
 from flowguard.metrics.collector import MetricsCollector
 
@@ -59,29 +59,22 @@ class FlowGuard:
         )
 
         try:
-            # P1-1: Determine invocation contract statically via inspect.signature ONCE
-            sig = inspect.signature(self.fallback)
-            params = sig.parameters
-
-            if (
-                "context" in params
-                or "ctx" in params
-                or (len(params) == 1 and list(params.keys())[0] in ("context", "ctx"))
-            ):
+            # P1-2: Explicit context handler checking (annotation or wrapper), no parameter name guessing!
+            if is_context_handler(self.fallback):
                 res = self.fallback(ctx)
-            elif "exc" in params and "exc" not in kwargs:
-                # Legacy fallback with exc keyword
-                res = self.fallback(*args, exc=__flowguard_exc__, **kwargs)
             else:
-                # Pass original args and kwargs without collision (P1-2)
-                res = self.fallback(*args, **kwargs)
+                # Ordinary business fallback: pass original args/kwargs
+                sig = inspect.signature(self.fallback)
+                if "exc" in sig.parameters and "exc" not in kwargs:
+                    res = self.fallback(*args, exc=__flowguard_exc__, **kwargs)
+                else:
+                    res = self.fallback(*args, **kwargs)
 
             if inspect.isawaitable(res):
                 return await res
             return res
         except Exception as fb_exc:
             logger.exception("[%s] Fallback execution failed: %s", self.name, fb_exc)
-            # P1-1: Preserve exception chain and do not retry handler
             raise fb_exc from __flowguard_exc__
 
     async def execute(

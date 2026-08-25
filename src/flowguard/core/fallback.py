@@ -46,40 +46,48 @@ def with_fallback_context(func: Callable[..., Any]) -> Callable[..., Any]:
 
 def is_context_handler(func: Callable[..., Any]) -> bool:
     """
-    Check if a callable explicitly expects FallbackContext via annotation, attribute, or ChoiceFallback type.
-    Supports standard annotations, typing.get_type_hints(), and 'from __future__ import annotations' string hints.
+    Check if a callable explicitly expects FallbackContext as an input parameter.
+
+    Precision Boundaries:
+    - Excludes function return annotations (typing.get_type_hints() 'return').
+    - Disallows broad suffix matching (only accepts exact 'FallbackContext' or dotted '... .FallbackContext').
+    - Preserves ordinary business parameters (e.g. prompt: str, val: BusinessFallbackContext).
     """
     if isinstance(func, ChoiceFallback):
         return True
     if getattr(func, "__flowguard_context_handler__", False):
         return True
 
-    # 1. Try typing.get_type_hints (resolves string forward refs)
+    try:
+        sig = inspect.signature(func)
+    except (ValueError, TypeError):
+        return False
+
+    hints: Dict[str, Any] = {}
     try:
         hints = typing.get_type_hints(func)
-        for hint in hints.values():
-            if hint is FallbackContext or getattr(hint, "__name__", "") == "FallbackContext":
-                return True
     except Exception:
         pass
 
-    # 2. Inspect raw parameter annotations (supports class object, __name__, and deferred str annotations)
-    try:
-        sig = inspect.signature(func)
-        for param in sig.parameters.values():
-            ann = param.annotation
-            if ann is FallbackContext:
+    for param_name, param in sig.parameters.items():
+        # 1. Check resolved parameter type hint (ignoring 'return')
+        resolved = hints.get(param_name)
+        if resolved is FallbackContext or getattr(resolved, "__name__", "") == "FallbackContext":
+            return True
+
+        # 2. Check raw parameter annotation
+        ann = param.annotation
+        if ann is FallbackContext:
+            return True
+        if getattr(ann, "__name__", "") == "FallbackContext":
+            return True
+
+        # 3. String annotation matching under 'from __future__ import annotations'
+        # Must be exact 'FallbackContext' or preceded by a dot module prefix
+        if isinstance(ann, str):
+            clean = ann.strip()
+            if clean == "FallbackContext" or clean.endswith(".FallbackContext"):
                 return True
-            if getattr(ann, "__name__", "") == "FallbackContext":
-                return True
-            if isinstance(ann, str) and (
-                ann == "FallbackContext"
-                or ann.endswith(".FallbackContext")
-                or ann.endswith("FallbackContext")
-            ):
-                return True
-    except (ValueError, TypeError):
-        pass
 
     return False
 
@@ -158,7 +166,7 @@ class ChoiceFallback:
         target_func = self._candidates[selected_key]
         logger.info("Executing chosen fallback route: %s", selected_key)
 
-        # P1 Fix: Separate static signature inspection from execution completely (no invocation in try/except)
+        # Inspect signature statically outside invocation
         if is_context_handler(target_func):
             res = target_func(ctx)
         else:

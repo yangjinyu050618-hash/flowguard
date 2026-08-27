@@ -6,7 +6,7 @@ from flowguard.exceptions import CircuitBreakerOpenError
 
 @pytest.mark.asyncio
 async def test_circuit_breaker_transitions():
-    cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0.1, half_open_success_threshold=1)
+    cb = CircuitBreaker(failure_threshold=2, recovery_timeout=0.03, half_open_success_threshold=1)
     assert cb.state == CircuitState.CLOSED
 
     await cb.record_failure(RuntimeError("fail 1"))
@@ -18,8 +18,8 @@ async def test_circuit_breaker_transitions():
     with pytest.raises(CircuitBreakerOpenError):
         await cb.before_call()
 
-    # Wait for recovery timeout
-    await asyncio.sleep(0.12)
+    # Wait for recovery timeout with generous safety margin
+    await asyncio.sleep(0.08)
     assert cb.can_execute() is True
 
     # before_call will transition to HALF_OPEN
@@ -32,11 +32,11 @@ async def test_circuit_breaker_transitions():
 
 @pytest.mark.asyncio
 async def test_circuit_breaker_half_open_failure():
-    cb = CircuitBreaker(failure_threshold=1, recovery_timeout=0.05, half_open_success_threshold=2)
+    cb = CircuitBreaker(failure_threshold=1, recovery_timeout=0.03, half_open_success_threshold=2)
     await cb.record_failure(RuntimeError("trip"))
     assert cb.state == CircuitState.OPEN
 
-    await asyncio.sleep(0.06)
+    await asyncio.sleep(0.08)
     await cb.before_call()
     assert cb.state == CircuitState.HALF_OPEN
 

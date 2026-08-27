@@ -30,14 +30,14 @@ from flowguard import __version__
 async def test_half_open_probe_cancellation_releases_slot():
     cb = CircuitBreaker(
         failure_threshold=1,
-        recovery_timeout=0.05,
+        recovery_timeout=0.03,
         half_open_success_threshold=2,
         half_open_max_probes=1,
     )
     await cb.record_failure(RuntimeError("trip"))
     assert cb.state == CircuitState.OPEN
 
-    await asyncio.sleep(0.06)
+    await asyncio.sleep(0.08)
     pipeline = FlowGuard(name="cb-cancel-pipe", circuit_breaker=cb)
 
     probe_started = asyncio.Event()

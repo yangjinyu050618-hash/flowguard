@@ -5,7 +5,7 @@ Demonstrates a production-grade FastAPI / ASGI Gateway Request Handler featuring
 1. Dual Token-Bucket Rate Limiting (RPM + TPM token budgeting)
 2. Resilient Execution with Circuit Breaking & Jittered Retry
 3. Graceful Multi-Model Degradation via ChoiceFallback
-4. Client Request Cancellation Propagation (Zero-Leak Cancellation)
+4. Client Request Cancellation (Zero-Leak Concurrency Slot Recovery)
 5. Prometheus Telemetry Exposition Endpoint (/metrics)
 """
 # ruff: noqa: E402
@@ -48,7 +48,7 @@ class GatewayResponse:
     status: str
     content: str
     routed_model: str
-    tokens_consumed: int = 0
+    tokens_budgeted: int = 0
     error: Optional[str] = None
 
 
@@ -110,7 +110,7 @@ class LLMGatewayService:
             status="SUCCESS",
             content=f"GPT-4o response to: '{req.prompt}'",
             routed_model="gpt-4o",
-            tokens_consumed=req.estimated_tokens,
+            tokens_budgeted=req.estimated_tokens,
         )
 
     def _select_fallback_route(self, ctx: FallbackContext, options: list) -> str:
@@ -132,7 +132,7 @@ class LLMGatewayService:
             status="DEGRADED",
             content=f"Claude 3.5 Sonnet fallback response to: '{req.prompt}'",
             routed_model="claude-3.5-sonnet",
-            tokens_consumed=req.estimated_tokens,
+            tokens_budgeted=req.estimated_tokens,
         )
 
     async def _fallback_gemini(self, ctx: FallbackContext) -> GatewayResponse:
@@ -144,7 +144,7 @@ class LLMGatewayService:
             status="DEGRADED",
             content=f"Gemini 2.5 Flash fallback response to: '{req.prompt}'",
             routed_model="gemini-2.5-flash",
-            tokens_consumed=req.estimated_tokens,
+            tokens_budgeted=req.estimated_tokens,
         )
 
     async def handle_request(self, req: GatewayRequest) -> GatewayResponse:
@@ -157,7 +157,7 @@ class LLMGatewayService:
                 status="REJECTED",
                 content="",
                 routed_model="none",
-                tokens_consumed=0,
+                tokens_budgeted=0,
                 error=str(err),
             )
         except asyncio.CancelledError:
@@ -191,7 +191,7 @@ def create_gateway_app() -> Any:
             "status": res.status,
             "content": res.content,
             "routed_model": res.routed_model,
-            "tokens_consumed": res.tokens_consumed,
+            "tokens_budgeted": res.tokens_budgeted,
         }
 
     @app.get("/metrics")
@@ -213,7 +213,7 @@ async def main() -> None:
     )
     res1 = await gateway.handle_request(req1)
     print(
-        f"[{res1.status}] Routed: {res1.routed_model} ({res1.tokens_consumed} tokens) -> {res1.content}"
+        f"[{res1.status}] Routed: {res1.routed_model} ({res1.tokens_budgeted} tokens) -> {res1.content}"
     )
 
     print("\n--- 2. Handling Outage with Fallback Degradation ---")
@@ -225,7 +225,7 @@ async def main() -> None:
     )
     res2 = await gateway.handle_request(req2)
     print(
-        f"[{res2.status}] Routed: {res2.routed_model} ({res2.tokens_consumed} tokens) -> {res2.content}"
+        f"[{res2.status}] Routed: {res2.routed_model} ({res2.tokens_budgeted} tokens) -> {res2.content}"
     )
 
     print("\n--- 3. Handling Client Disconnect / Cancellation ---")
@@ -239,7 +239,9 @@ async def main() -> None:
         await task
         print("Task completed unexpectedly")
     except asyncio.CancelledError:
-        print("[CANCELLED] Request successfully cancelled without slot/token leaks.")
+        print(
+            "[CANCELLED] Request successfully cancelled: bulkhead slots, probe gates, and queue waiters unwound without leaks."
+        )
 
     print("\n--- 4. Prometheus Telemetry Snapshot ---")
     print(export_prometheus(gateway.metrics))

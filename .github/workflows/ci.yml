@@ -101,16 +101,16 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install Dependencies with Official SDKs
+      - name: Install Dependencies with Official SDKs and Gateway
         run: |
           python -m pip install --upgrade pip
           pip install hatchling pytest pytest-asyncio pytest-cov
-          pip install openai anthropic google-genai httpx
+          pip install openai anthropic google-genai httpx fastapi
           pip install -e .
 
-      - name: Run Official SDK Contract Tests
+      - name: Run Official SDK Contract and Gateway ASGI Tests
         run: |
-          pytest tests/test_official_sdk_contracts.py -v
+          pytest tests/test_official_sdk_contracts.py tests/test_gateway_example.py -v
 
   ci-success:
     name: CI Success

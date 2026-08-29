@@ -6,10 +6,9 @@ and Google GenAI SDK signatures, execute public adapter methods end-to-end,
 and enforce sole retry ownership WITHOUT making real network requests.
 """
 
-import pytest
-import httpx
 from unittest.mock import AsyncMock
-from flowguard.adapters import ResilientOpenAI, ResilientAnthropic, ResilientGemini
+import pytest
+from flowguard.adapters import ResilientAnthropic, ResilientGemini, ResilientOpenAI
 
 
 # -------------------------------------------------------------------------
@@ -18,10 +17,11 @@ from flowguard.adapters import ResilientOpenAI, ResilientAnthropic, ResilientGem
 @pytest.mark.asyncio
 async def test_official_openai_sdk_contract():
     try:
+        import httpx
         from openai import AsyncOpenAI
         from openai.types.chat import ChatCompletion
     except ImportError:
-        pytest.skip("openai SDK not installed; skipping official SDK contract test")
+        pytest.skip("openai or httpx not installed; skipping official SDK contract test")
 
     call_count = 0
 

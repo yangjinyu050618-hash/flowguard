@@ -11,7 +11,7 @@
 [![Code Style: Ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 [![Type Checked: Mypy](https://img.shields.io/badge/type_checked-mypy-blue.svg)](https://github.com/python/mypy)
 
-[Features](#-key-features) • [Architecture](#-architecture) • [Quick Start](#-quick-start) • [Adapters](#-ecosystem-adapters) • [Telemetry](#-telemetry--metrics) • [Examples](#-runnable-examples)
+[Pain Points Solved](#-production-llm-headaches-solved) • [Quick Start](#-quick-start) • [Adapters](#-ecosystem-adapters--multi-llm-orchestration) • [Why FlowGuard?](docs/WHY_FLOWGUARD.md) • [Benchmarks](benchmarks/README.md) • [Examples](#-runnable-examples)
 
 </div>
 
@@ -23,7 +23,16 @@
 
 > 🔍 **Deep Dive**: See [Why FlowGuard? (Architecture, Boundaries & Comparison Matrix)](docs/WHY_FLOWGUARD.md) for a detailed breakdown of FlowGuard's stable core, non-goals, and how it compares with hand-rolling independent libraries.
 
-When dealing with third-party LLM providers, rate limits (RPM / TPM), transient server hiccups (HTTP 429 / 503), and unpredictable downstream latency often degrade application availability. FlowGuard combines **strict FIFO token-bucket rate limiting**, **gated circuit breaking**, **jittered exponential backoff**, and **bulkhead resource partitioning** into a single composable pipeline.
+---
+
+## 🛑 Production LLM Headaches Solved
+
+| Real-World LLM Headache | The Problem with Naive Solutions | How FlowGuard Solves It |
+| :--- | :--- | :--- |
+| **OpenAI / Claude 429 Rate Limiting** | Ad-hoc sleeps or standard RPM limiters ignore token volume, causing sudden TPM quota exhaustion and billing surprises. | **Dual RPM & TPM Token-Bucket**: Enforces strict FIFO token budgeting per attempt, preventing starvation and quota burnout. |
+| **Retry Storms & Duplicate Billing** | Wrapping official SDKs with Tenacity causes **2 SDK retries × 3 outer retries = 6 physical API calls** and 6x token bills. | **Sole Retry Ownership**: Automatically derives `max_retries=0` client copies; every physical attempt is accounted for and metered exactly once. |
+| **Upstream 503 / 529 Outages** | Crashing or returning raw errors to end users when a high-tier model experiences an outage. | **Circuit Breakers & ChoiceFallback**: Probe-gated fast-fail trips `OPEN` and automatically routes requests to backup models (Claude/Gemini/DeepSeek) or human-in-the-loop decisions. |
+| **FastAPI Client Disconnects** | Cancelling streaming LLM requests leaves semaphore slots locked, rate limiter tokens permanently drained, or orphaned background tasks. | **Zero-Leak Slot Recovery**: `asyncio.CancelledError` unwinds waiting queues, bulkhead concurrency slots, and half-open probe gates immediately without task leaks. |
 
 ---
 
@@ -79,23 +88,17 @@ Incoming Task -> [ Retry Loop (outer) ]
 pip install flowguard-core
 ```
 
-The core package has zero runtime dependencies. Install only the provider SDKs
-used by your application when creating clients for the native adapters:
+The core package has zero runtime dependencies. Install optional SDKs or gateway dependencies as needed:
 
 ```bash
+# Optional official LLM SDKs
 pip install openai anthropic google-genai
+
+# Optional FastAPI gateway dependencies
+pip install fastapi httpx
 ```
 
-FlowGuard accepts preconfigured SDK clients, so provider credentials and client
-settings remain under application control.
-
-*Or install from source:*
-
-```bash
-git clone https://github.com/yangjinyu050618-hash/flowguard.git
-cd flowguard
-pip install -e .
-```
+---
 
 ### 1. One-Line Decorator `@guard` with Fallback
 
@@ -141,7 +144,7 @@ claude_client = ResilientAnthropic(raw_anthropic, rpm_limit=300.0, tpm_limit=40_
 gemini_client = ResilientGemini(raw_gemini, rpm_limit=300.0, tpm_limit=60_000.0)
 ```
 
-> **Note on Retry Ownership**: FlowGuard manages end-to-end retry policies, backoff, and RPM/TPM token reservation as the sole retry owner. Underlying SDK retries are automatically disabled (`max_retries=0` via `with_options` for OpenAI & Anthropic; keep default `http_options` for Google GenAI) so physical requests match metered attempts.
+> **Note on Retry Ownership**: FlowGuard manages end-to-end retry policies, backoff, and RPM/TPM token reservation as the sole retry owner. Underlying SDK retries are automatically disabled (`max_retries=0` via derived client copies) so physical requests match metered attempts.
 
 ---
 

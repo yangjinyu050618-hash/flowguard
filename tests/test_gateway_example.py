@@ -34,12 +34,13 @@ async def test_gateway_successful_request():
 
     assert res.status == "SUCCESS"
     assert res.routed_model == "gpt-4o"
-    assert res.tokens_budgeted == 150
+    # Single attempt = 150 tokens
+    assert res.total_tokens_budgeted == 150
     assert "GPT-4o response" in res.content
 
 
 @pytest.mark.asyncio
-async def test_gateway_fallback_degradation():
+async def test_gateway_fallback_degradation_cumulative_tokens():
     gateway = LLMGatewayService()
     req = GatewayRequest(
         request_id="REQ-TEST-2", user_id="USR-2", prompt="Test (sim_fail)", estimated_tokens=120
@@ -48,7 +49,8 @@ async def test_gateway_fallback_degradation():
 
     assert res.status == "DEGRADED"
     assert res.routed_model == "claude-3.5-sonnet"
-    assert res.tokens_budgeted == 120
+    # 2 primary attempts (120 * 2 = 240) + 1 fallback attempt (120) = 360 total budgeted tokens
+    assert res.total_tokens_budgeted == 360
     assert "Claude 3.5 Sonnet fallback" in res.content
 
 
@@ -72,7 +74,7 @@ async def test_gateway_cancellation_propagation():
     )
     res_after = await gateway.handle_request(req_after)
     assert res_after.status == "SUCCESS"
-    assert res_after.tokens_budgeted == 100
+    assert res_after.total_tokens_budgeted == 100
 
 
 @pytest.mark.asyncio
@@ -90,7 +92,7 @@ async def test_fastapi_endpoints_actual_requests():
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://testgateway"
     ) as client:
-        # 1. Test POST /v1/chat/completions normal request
+        # 1. Test POST /v1/chat/completions normal request (1 attempt = 100 tokens)
         payload1 = {
             "request_id": "REQ-ASGI-1",
             "user_id": "U1",
@@ -102,9 +104,9 @@ async def test_fastapi_endpoints_actual_requests():
         data1 = resp1.json()
         assert data1["status"] == "SUCCESS"
         assert data1["routed_model"] == "gpt-4o"
-        assert data1["tokens_budgeted"] == 100
+        assert data1["total_tokens_budgeted"] == 100
 
-        # 2. Test POST /v1/chat/completions fallback request
+        # 2. Test POST /v1/chat/completions fallback request (2 primary attempts + 1 fallback = 3 * 80 = 240 tokens)
         payload2 = {
             "request_id": "REQ-ASGI-2",
             "user_id": "U2",
@@ -116,7 +118,7 @@ async def test_fastapi_endpoints_actual_requests():
         data2 = resp2.json()
         assert data2["status"] == "DEGRADED"
         assert data2["routed_model"] == "claude-3.5-sonnet"
-        assert data2["tokens_budgeted"] == 80
+        assert data2["total_tokens_budgeted"] == 240
 
         # 3. Test GET /metrics Prometheus exposition endpoint
         resp3 = await client.get("/metrics")

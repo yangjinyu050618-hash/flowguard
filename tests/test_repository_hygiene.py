@@ -31,3 +31,17 @@ def test_no_disallowed_control_characters_in_repository():
                     violations[rel_path] = bad_bytes
 
     assert not violations, f"Disallowed control characters found in files: {violations}"
+
+
+def test_package_identity_flowguard_core():
+    """Ensure pyproject.toml distribution name is strictly maintained as flowguard-core."""
+    import re
+
+    toml_path = os.path.join(REPO_ROOT, "pyproject.toml")
+    with open(toml_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    match = re.search(r'name\s*=\s*"([^"]+)"', content)
+    assert match is not None
+    assert match.group(1) == "flowguard-core", (
+        f"Distribution name must be flowguard-core, got {match.group(1)}"
+    )

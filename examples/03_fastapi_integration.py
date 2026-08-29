@@ -42,13 +42,23 @@ class GatewayRequest:
     estimated_tokens: int = 100
 
 
+class RequestTokenTracker:
+    """Tracks cumulative TPM tokens budgeted across all physical attempt dispatches."""
+
+    def __init__(self) -> None:
+        self.total: int = 0
+
+    def record(self, count: int) -> None:
+        self.total += count
+
+
 @dataclass
 class GatewayResponse:
     request_id: str
     status: str
     content: str
     routed_model: str
-    tokens_budgeted: int = 0
+    total_tokens_budgeted: int = 0
     error: Optional[str] = None
 
 
@@ -94,10 +104,13 @@ class LLMGatewayService:
             metrics=self.metrics,
         )
 
-    async def _primary_gpt4o(self, req: GatewayRequest) -> GatewayResponse:
+    async def _primary_gpt4o(
+        self, req: GatewayRequest, tracker: RequestTokenTracker
+    ) -> GatewayResponse:
         """Primary LLM Route (simulated GPT-4o call with true TPM token budgeting)."""
-        # True TPM token rate limit enforcement:
+        # True TPM token rate limit enforcement per attempt:
         await self.tpm_limiter.acquire(tokens=float(req.estimated_tokens), timeout=5.0)
+        tracker.record(req.estimated_tokens)
 
         if "sim_fail" in req.prompt:
             raise ConnectionResetError("GPT-4o API 503 Service Unavailable")
@@ -110,7 +123,7 @@ class LLMGatewayService:
             status="SUCCESS",
             content=f"GPT-4o response to: '{req.prompt}'",
             routed_model="gpt-4o",
-            tokens_budgeted=req.estimated_tokens,
+            total_tokens_budgeted=tracker.total,
         )
 
     def _select_fallback_route(self, ctx: FallbackContext, options: list) -> str:
@@ -124,40 +137,45 @@ class LLMGatewayService:
 
     async def _fallback_claude(self, ctx: FallbackContext) -> GatewayResponse:
         req: GatewayRequest = ctx.args[0]
+        tracker: RequestTokenTracker = ctx.args[1]
         # Acquire token budget on backup route
         await self.tpm_limiter.acquire(tokens=float(req.estimated_tokens), timeout=5.0)
+        tracker.record(req.estimated_tokens)
         await asyncio.sleep(0.01)
         return GatewayResponse(
             request_id=req.request_id,
             status="DEGRADED",
             content=f"Claude 3.5 Sonnet fallback response to: '{req.prompt}'",
             routed_model="claude-3.5-sonnet",
-            tokens_budgeted=req.estimated_tokens,
+            total_tokens_budgeted=tracker.total,
         )
 
     async def _fallback_gemini(self, ctx: FallbackContext) -> GatewayResponse:
         req: GatewayRequest = ctx.args[0]
+        tracker: RequestTokenTracker = ctx.args[1]
         await self.tpm_limiter.acquire(tokens=float(req.estimated_tokens), timeout=5.0)
+        tracker.record(req.estimated_tokens)
         await asyncio.sleep(0.01)
         return GatewayResponse(
             request_id=req.request_id,
             status="DEGRADED",
             content=f"Gemini 2.5 Flash fallback response to: '{req.prompt}'",
             routed_model="gemini-2.5-flash",
-            tokens_budgeted=req.estimated_tokens,
+            total_tokens_budgeted=tracker.total,
         )
 
     async def handle_request(self, req: GatewayRequest) -> GatewayResponse:
         """Entry point for incoming Gateway HTTP/WebSocket requests."""
+        tracker = RequestTokenTracker()
         try:
-            return await self.pipeline.execute(self._primary_gpt4o, req)
+            return await self.pipeline.execute(self._primary_gpt4o, req, tracker)
         except (RateLimitExceededError, CircuitBreakerOpenError) as err:
             return GatewayResponse(
                 request_id=req.request_id,
                 status="REJECTED",
                 content="",
                 routed_model="none",
-                tokens_budgeted=0,
+                total_tokens_budgeted=tracker.total,
                 error=str(err),
             )
         except asyncio.CancelledError:
@@ -191,7 +209,7 @@ def create_gateway_app() -> Any:
             "status": res.status,
             "content": res.content,
             "routed_model": res.routed_model,
-            "tokens_budgeted": res.tokens_budgeted,
+            "total_tokens_budgeted": res.total_tokens_budgeted,
         }
 
     @app.get("/metrics")
@@ -213,10 +231,12 @@ async def main() -> None:
     )
     res1 = await gateway.handle_request(req1)
     print(
-        f"[{res1.status}] Routed: {res1.routed_model} ({res1.tokens_budgeted} tokens) -> {res1.content}"
+        f"[{res1.status}] Routed: {res1.routed_model} (Total Budgeted: {res1.total_tokens_budgeted} tokens) -> {res1.content}"
     )
 
-    print("\n--- 2. Handling Outage with Fallback Degradation ---")
+    print(
+        "\n--- 2. Handling Outage with Fallback Degradation (Multi-Attempt Cumulative Tokens) ---"
+    )
     req2 = GatewayRequest(
         request_id="REQ-002",
         user_id="USR-102",
@@ -225,7 +245,7 @@ async def main() -> None:
     )
     res2 = await gateway.handle_request(req2)
     print(
-        f"[{res2.status}] Routed: {res2.routed_model} ({res2.tokens_budgeted} tokens) -> {res2.content}"
+        f"[{res2.status}] Routed: {res2.routed_model} (Total Budgeted across 2 primary retries + 1 fallback = {res2.total_tokens_budgeted} tokens) -> {res2.content}"
     )
 
     print("\n--- 3. Handling Client Disconnect / Cancellation ---")

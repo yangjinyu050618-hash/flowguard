@@ -19,7 +19,9 @@
 
 ## 📖 Overview
 
-**FlowGuard** (`flowguard-core`) is a lightweight, asynchronous Python resilience framework tailored for modern AI workloads, high-concurrency Microservices, and LLM API orchestrations (e.g. OpenAI, Anthropic, Gemini, DeepSeek).
+**FlowGuard** (`flowguard-core`) is a lightweight, zero-dependency asynchronous Python resilience engine tailored for AI workloads, high-concurrency microservices, and multi-LLM API gateways.
+
+> 🔍 **Deep Dive**: See [Why FlowGuard? (Architecture, Boundaries & Comparison Matrix)](docs/WHY_FLOWGUARD.md) for a detailed breakdown of FlowGuard's stable core, non-goals, and how it compares with hand-rolling independent libraries.
 
 When dealing with third-party LLM providers, rate limits (RPM / TPM), transient server hiccups (HTTP 429 / 503), and unpredictable downstream latency often degrade application availability. FlowGuard combines **strict FIFO token-bucket rate limiting**, **gated circuit breaking**, **jittered exponential backoff**, and **bulkhead resource partitioning** into a single composable pipeline.
 

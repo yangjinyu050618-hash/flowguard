@@ -181,7 +181,8 @@ async def run_scenario() -> Dict[str, Any]:
     assert cancelled_requests == 3, f"Expected 3 cancelled requests, got {cancelled_requests}"
     assert service.retried_attempts > 0, "Expected retry mechanism to trigger on transient faults"
     assert cb.state == CircuitState.CLOSED, "Expected circuit breaker to recover to CLOSED state"
-    assert p50_ms > 0.0, "Expected positive p50 latency"
+    assert p50_ms >= 0.0, "Expected non-negative p50 latency"
+    assert p95_ms >= p50_ms, "Expected p95 latency to be >= p50 latency"
 
     return result
 

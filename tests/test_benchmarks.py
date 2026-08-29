@@ -29,6 +29,8 @@ async def test_resilience_scenario_invariants_and_schema():
     assert data["cancelled_requests"] == 3
     assert data["retried_calls"] > 0
     assert data["circuit_state_final"] == "CLOSED"
+    assert data["latency_p50_ms"] >= 0.0
+    assert data["latency_p95_ms"] >= data["latency_p50_ms"]
     assert (
         data["successful_requests"]
         + data["fallback_calls"]

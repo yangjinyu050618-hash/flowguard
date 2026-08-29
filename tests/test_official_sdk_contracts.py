@@ -6,7 +6,7 @@ and Google GenAI SDK signatures, execute public adapter methods end-to-end,
 and enforce sole retry ownership WITHOUT making real network requests.
 """
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, create_autospec
 import pytest
 from flowguard.adapters import ResilientAnthropic, ResilientGemini, ResilientOpenAI
 
@@ -78,7 +78,7 @@ async def test_official_openai_sdk_contract():
 
 
 # -------------------------------------------------------------------------
-# 2. Official Anthropic SDK Contract Test (End-to-End Execution via Strict Mock)
+# 2. Official Anthropic SDK Contract Test (Strict Autospec with spec_set=True)
 # -------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_official_anthropic_sdk_contract():
@@ -105,11 +105,10 @@ async def test_official_anthropic_sdk_contract():
         usage=Usage(input_tokens=12, output_tokens=18),
     )
 
-    # Use strict spec mirroring official messages.create signature
-    adapter._client.messages.create = AsyncMock(
-        spec=raw_client.messages.create,
-        return_value=mock_msg,
-    )
+    # Use strict create_autospec with spec_set=True to strictly reject illegal kwargs
+    mock_create = create_autospec(raw_client.messages.create, spec_set=True)
+    mock_create.side_effect = AsyncMock(return_value=mock_msg)
+    adapter._client.messages.create = mock_create
 
     # 2. Actually invoke public adapter method
     res = await adapter.create_message(
@@ -123,13 +122,16 @@ async def test_official_anthropic_sdk_contract():
     assert isinstance(res, Message)
     assert res.content[0].text == "Mocked response from Claude!"
     assert res.usage.input_tokens == 12
-    # Verify no illegal max_retries argument was forwarded to messages.create
-    _, kwargs = adapter._client.messages.create.call_args
-    assert "max_retries" not in kwargs
+
+    # 4. Strictly assert that illegal parameter forwarding fails with TypeError under spec_set=True
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        mock_create(
+            model="claude-3-5-sonnet-20241022", max_tokens=100, messages=[], illegal_param=123
+        )
 
 
 # -------------------------------------------------------------------------
-# 3. Official Google GenAI SDK Contract Test (End-to-End Execution via Strict Mock)
+# 3. Official Google GenAI SDK Contract Test (Strict Autospec with spec_set=True)
 # -------------------------------------------------------------------------
 @pytest.mark.asyncio
 async def test_official_gemini_sdk_contract():
@@ -153,12 +155,12 @@ async def test_official_gemini_sdk_contract():
         ]
     )
 
-    adapter._client.aio.models.generate_content = AsyncMock(
-        spec=raw_client.aio.models.generate_content,
-        return_value=mock_resp,
-    )
+    # Use strict create_autospec with spec_set=True
+    mock_gen = create_autospec(raw_client.aio.models.generate_content, spec_set=True)
+    mock_gen.return_value = mock_resp
+    adapter._client.aio.models.generate_content = mock_gen
 
-    # Actually invoke public adapter method
+    # 1. Actually invoke public adapter method
     res = await adapter.generate_content(
         model="gemini-2.5-flash",
         contents="Hello Gemini!",
@@ -167,7 +169,7 @@ async def test_official_gemini_sdk_contract():
 
     assert isinstance(res, types.GenerateContentResponse)
     assert res.candidates[0].content.parts[0].text == "Mocked response from Gemini!"
-    # Verify model and contents passed correctly
-    _, kwargs = adapter._client.aio.models.generate_content.call_args
-    assert kwargs["model"] == "gemini-2.5-flash"
-    assert kwargs["contents"] == "Hello Gemini!"
+
+    # 2. Strictly assert that illegal parameter forwarding fails with TypeError under spec_set=True
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        mock_gen(model="gemini-2.5-flash", contents="Hello Gemini!", illegal_param=123)

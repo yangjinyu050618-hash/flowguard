@@ -77,6 +77,16 @@ Incoming Task -> [ Retry Loop (outer) ]
 pip install flowguard-core
 ```
 
+The core package has zero runtime dependencies. Install only the provider SDKs
+used by your application when creating clients for the native adapters:
+
+```bash
+pip install openai anthropic google-genai
+```
+
+FlowGuard accepts preconfigured SDK clients, so provider credentials and client
+settings remain under application control.
+
 *Or install from source:*
 
 ```bash

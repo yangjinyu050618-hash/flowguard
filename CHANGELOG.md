@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-08-25
+
+### Added
+- Added `ChoiceFallback` for interactive human-in-the-loop fallback routing.
+- Added immutable `FallbackContext` metadata for context-aware fallback handlers.
+- Added native async adapters for Anthropic Claude and Google Gemini.
+- Added graceful fallback examples and multi-LLM orchestration examples.
+- Added a daily multi-platform CI health check.
+
+### Changed
+- Made FlowGuard the sole retry owner for OpenAI and Anthropic adapters by disabling SDK retries on derived clients.
+- Expanded fallback dispatch to support explicit `FallbackContext` annotations without replacing ordinary business arguments.
+
+### Fixed
+- Prevented cancellation from triggering fallback work or leaking circuit-breaker probe slots.
+- Prevented synchronous fallback and candidate `TypeError` exceptions from causing duplicate execution.
+- Preserved caller keyword arguments and per-request token estimates in fallback context.
+- Corrected Google GenAI client-error classification and async-client validation.
+- Tightened context-handler detection to ignore return annotations and unrelated similarly named types.
+
 ## [0.2.2] - 2026-08-23
 
 ### Fixed

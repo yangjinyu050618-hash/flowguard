@@ -65,3 +65,17 @@ jobs:
       - name: Run Tests with Coverage
         run: |
           pytest --cov=flowguard --cov-fail-under=80 -v
+
+  ci-success:
+    name: CI Success
+    if: ${{ always() }}
+    needs: [lint-and-typecheck, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify required jobs
+        env:
+          LINT_RESULT: ${{ needs.lint-and-typecheck.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+        run: |
+          test "$LINT_RESULT" = "success"
+          test "$TEST_RESULT" = "success"

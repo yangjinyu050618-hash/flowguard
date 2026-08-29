@@ -31,32 +31,29 @@ from flowguard.core.retry import ExponentialBackoff, RetryPolicy
 logging.basicConfig(level=logging.ERROR)
 
 
-class MockService:
+class MockResilientService:
     """Deterministic mock service generating controlled failure sequences."""
 
     def __init__(self) -> None:
-        self.primary_attempts: int = 0
-        self.retried_attempts: int = 0
-        self.transient_fail_count: int = 0
+        self.downstream_invocations: int = 0
+        self.transient_fail_tracker: Dict[int, int] = {}
 
     async def execute(self, req_id: int, mode: str) -> str:
-        self.primary_attempts += 1
-        await asyncio.sleep(0.002)
+        self.downstream_invocations += 1
+        await asyncio.sleep(0.001)
 
         if mode == "success":
             return f"success_{req_id}"
 
         if mode == "transient_fail":
-            # Fails on first attempt, succeeds on retry
-            if self.transient_fail_count % 2 == 0:
-                self.transient_fail_count += 1
-                self.retried_attempts += 1
-                raise ConnectionResetError("Transient 503 upstream error")
-            self.transient_fail_count += 1
+            attempts = self.transient_fail_tracker.get(req_id, 0) + 1
+            self.transient_fail_tracker[req_id] = attempts
+            if attempts == 1:
+                raise ConnectionResetError(f"Transient 503 for req {req_id} attempt {attempts}")
             return f"recovered_{req_id}"
 
         if mode == "hard_fail":
-            raise ConnectionRefusedError("Upstream cluster outage 502")
+            raise ConnectionRefusedError(f"Upstream cluster outage 502 for req {req_id}")
 
         if mode == "hanging":
             await asyncio.sleep(5.0)
@@ -67,19 +64,25 @@ class MockService:
 
 async def run_scenario() -> Dict[str, Any]:
     """Run the deterministic resilience benchmark scenario."""
-    service = MockService()
+    service = MockResilientService()
+    retry_dispatches: int = 0
+
+    def _on_retry(attempt: int, exc: BaseException, delay: float) -> None:
+        nonlocal retry_dispatches
+        retry_dispatches += 1
 
     cb = CircuitBreaker(
         failure_threshold=3,
-        recovery_timeout=0.03,
+        recovery_timeout=0.2,
         half_open_success_threshold=2,
         half_open_max_probes=2,
     )
     retry = RetryPolicy(
         max_attempts=2,
-        backoff=ExponentialBackoff(base_delay=0.002, jitter="none"),
+        backoff=ExponentialBackoff(base_delay=0.001, jitter="none"),
+        on_retry=_on_retry,
     )
-    limiter = TokenBucketLimiter(rate=200.0, capacity=20.0, initial_tokens=20.0)
+    limiter = TokenBucketLimiter(rate=500.0, capacity=50.0, initial_tokens=50.0)
     bulkhead = Bulkhead(max_concurrent=10, max_queued=20)
 
     def _backup_candidate(ctx: FallbackContext) -> str:
@@ -109,6 +112,15 @@ async def run_scenario() -> Dict[str, Any]:
     exceptions_caught = 0
     latencies: List[float] = []
 
+    # Deterministic Execution Sequence:
+    # Req 0-9   (10): Normal requests (10 successes, 10 downstream calls)
+    # Req 10-12  (3): Hanging requests cancelled mid-flight (3 cancellations, 3 downstream calls)
+    # Req 13-17  (5): Transient fails -> 1st attempt fails, 2nd succeeds (5 successes, 10 downstream calls, 5 retries)
+    # Req 18-29 (12): Hard fails -> 18 fails 2 attempts (2 calls, 1 retry, CB fails=1); 19 fails attempt 1 (1 call, 1 retry, CB fails=2); attempt 2 trips CB to OPEN (fail-fast, 0 calls); 20..29 fail fast while OPEN (0 calls, 0 retries). (12 fallbacks, 3 downstream calls, 2 retries)
+    # Cooldown sleep (0.3s > recovery_timeout 0.2s) -> CB enters HALF_OPEN
+    # Req 30-31  (2): Half-open probes succeed -> CB closes to CLOSED (2 successes, 2 downstream calls)
+    # Req 32-49 (18): Healthy requests (18 successes, 18 downstream calls)
+
     for req_id in range(total_requests):
         t0 = time.monotonic()
         mode = "success"
@@ -117,19 +129,16 @@ async def run_scenario() -> Dict[str, Any]:
             mode = "hanging"
         elif 13 <= req_id <= 17:
             mode = "transient_fail"
-        elif 18 <= req_id <= 24:
-            mode = "hard_fail"
-        elif 25 <= req_id <= 29:
+        elif 18 <= req_id <= 29:
             mode = "hard_fail"
         elif req_id == 30:
-            # Let circuit breaker cooldown elapse before probe requests
-            await asyncio.sleep(0.08)
+            # Let circuit breaker recovery cooldown elapse before probe requests
+            await asyncio.sleep(0.3)
             mode = "success"
         else:
             mode = "success"
 
         if mode == "hanging":
-            # Simulate client-side request cancellation (e.g. client disconnects)
             task = asyncio.create_task(pipeline.execute(service.execute, req_id, mode))
             await asyncio.sleep(0.005)
             task.cancel()
@@ -162,8 +171,8 @@ async def run_scenario() -> Dict[str, Any]:
     result = {
         "total_requests": total_requests,
         "successful_requests": successful_requests,
-        "primary_calls": service.primary_attempts,
-        "retried_calls": service.retried_attempts,
+        "downstream_invocations": service.downstream_invocations,
+        "retried_calls": retry_dispatches,
         "fallback_calls": fallback_calls,
         "cancelled_requests": cancelled_requests,
         "exceptions_caught": exceptions_caught,
@@ -177,9 +186,15 @@ async def run_scenario() -> Dict[str, Any]:
         successful_requests + fallback_calls + cancelled_requests + exceptions_caught
         == total_requests
     ), f"Request accounting mismatch: {result}"
-    assert fallback_calls > 0, "Expected fallback to activate during hard failures"
+    assert successful_requests == 35, f"Expected 35 successful requests, got {successful_requests}"
+    assert fallback_calls == 12, f"Expected 12 fallback calls, got {fallback_calls}"
     assert cancelled_requests == 3, f"Expected 3 cancelled requests, got {cancelled_requests}"
-    assert service.retried_attempts > 0, "Expected retry mechanism to trigger on transient faults"
+    assert retry_dispatches == 7, (
+        f"Expected exactly 7 retry dispatches (5 transient + 2 hard before OPEN), got {retry_dispatches}"
+    )
+    assert service.downstream_invocations == 46, (
+        f"Expected 46 total downstream invocations, got {service.downstream_invocations}"
+    )
     assert cb.state == CircuitState.CLOSED, "Expected circuit breaker to recover to CLOSED state"
     assert p50_ms >= 0.0, "Expected non-negative p50 latency"
     assert p95_ms >= p50_ms, "Expected p95 latency to be >= p50 latency"

@@ -12,7 +12,7 @@ async def test_resilience_scenario_invariants_and_schema():
     required_keys = {
         "total_requests",
         "successful_requests",
-        "primary_calls",
+        "downstream_invocations",
         "retried_calls",
         "fallback_calls",
         "cancelled_requests",
@@ -24,10 +24,11 @@ async def test_resilience_scenario_invariants_and_schema():
     assert required_keys.issubset(data.keys())
 
     assert data["total_requests"] == 50
-    assert data["successful_requests"] > 0
-    assert data["fallback_calls"] > 0
+    assert data["successful_requests"] == 35
+    assert data["fallback_calls"] == 12
     assert data["cancelled_requests"] == 3
-    assert data["retried_calls"] > 0
+    assert data["retried_calls"] == 7
+    assert data["downstream_invocations"] == 46
     assert data["circuit_state_final"] == "CLOSED"
     assert data["latency_p50_ms"] >= 0.0
     assert data["latency_p95_ms"] >= data["latency_p50_ms"]

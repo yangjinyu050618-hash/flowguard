@@ -30,9 +30,32 @@ jobs:
           pip install ruff mypy hatchling
           pip install -e .
 
-      - name: Run Ruff Lint
+      - name: Run Ruff Lint and Format Check
         run: |
-          ruff check src tests
+          ruff check src tests examples benchmarks
+          ruff format --check src tests examples benchmarks
+
+      - name: Check Disallowed Control Characters
+        run: |
+          python -c "
+          import os, sys
+          bad_files = {}
+          for root, dirs, files in os.walk('.'):
+              if any(ignored in root for ignored in ('.git', '.pytest_cache', '__pycache__', '.mypy_cache', '.venv', 'venv')):
+                  continue
+              for file in files:
+                  if file.endswith(('.py', '.md', '.yml', '.yaml', '.toml', '.txt', '.json')):
+                      path = os.path.join(root, file)
+                      with open(path, 'rb') as f:
+                          content = f.read()
+                      for i, b in enumerate(content):
+                          if b < 32 and b not in (9, 10, 13):
+                              bad_files.setdefault(path, []).append((i, hex(b)))
+          if bad_files:
+              print('Disallowed control characters found:', bad_files, file=sys.stderr)
+              sys.exit(1)
+          print('Control character check passed: 0 disallowed bytes found.')
+          "
 
       - name: Run Mypy Strict Type Check
         run: |
@@ -82,7 +105,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install hatchling pytest pytest-asyncio pytest-cov
-          pip install openai anthropic google-genai
+          pip install openai anthropic google-genai httpx
           pip install -e .
 
       - name: Run Official SDK Contract Tests

@@ -251,7 +251,7 @@ class RedisTokenBucketLimiter(BaseRateLimiter):
             self._client = client
         else:
             try:
-                import redis.asyncio as aioredis  # type: ignore[import-not-found]
+                import redis.asyncio as aioredis
 
                 self._client = aioredis.from_url(redis_url or "redis://localhost:6379/0")
                 self._owns_client = True

@@ -26,6 +26,10 @@ class BaseRateLimiter(abc.ABC):
         """Reset limiter internal state."""
         pass
 
+    async def refund(self, tokens: float) -> None:
+        """Optional token refund for reconciliation (default: no-op)."""
+        pass
+
 
 class TokenBucketLimiter(BaseRateLimiter):
     """
@@ -166,6 +170,28 @@ class TokenBucketLimiter(BaseRateLimiter):
                 _, fut = self._waiters.popleft()
                 if not fut.done():
                     fut.set_result(None)
+
+    async def refund(self, tokens: float) -> None:
+        """
+        Safely return tokens to the bucket (e.g. for Prompt Caching discounts or over-estimated quota).
+        Immediately drains and wakes up any waiters whose token demands are now satisfied.
+        """
+        if tokens <= 0:
+            return
+        async with self._lock:
+            now = time.monotonic()
+            self._refill(now)
+            self.tokens = min(self.capacity, self.tokens + tokens)
+            self._drain(now)
+
+    def refund_sync(self, tokens: float) -> None:
+        """Synchronously return tokens to bucket without acquiring async lock."""
+        if tokens <= 0:
+            return
+        now = time.monotonic()
+        self._refill(now)
+        self.tokens = min(self.capacity, self.tokens + tokens)
+        self._drain(now)
 
     @property
     def current_tokens(self) -> float:

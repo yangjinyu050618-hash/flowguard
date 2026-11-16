@@ -8,6 +8,7 @@ from flowguard.exceptions import (
     CircuitBreakerOpenError,
     BulkheadFullError,
     MaxRetriesExceededError,
+    MidStreamInterruptedError,
     HTTPStatusError,
     TransientHTTPError,
     PermanentHTTPError,
@@ -16,6 +17,9 @@ from flowguard.core.limiter import (
     BaseRateLimiter,
     TokenBucketLimiter,
     SlidingWindowLimiter,
+)
+from flowguard.backends.redis import (
+    RedisTokenBucketLimiter,
 )
 from flowguard.core.circuit_breaker import (
     CircuitBreaker,
@@ -29,9 +33,13 @@ from flowguard.core.retry import (
 from flowguard.core.bulkhead import (
     Bulkhead,
 )
+from flowguard.core.streaming import (
+    ResilientStream,
+)
 from flowguard.core.pipeline import (
     FlowGuard,
     guard,
+    guard_stream,
 )
 from flowguard.core.fallback import (
     FallbackContext,
@@ -40,6 +48,17 @@ from flowguard.core.fallback import (
 )
 from flowguard.metrics.collector import (
     MetricsCollector,
+)
+from flowguard.metrics.otel import (
+    OpenTelemetryExporter,
+    GenAIMetrics,
+    export_opentelemetry,
+)
+from flowguard.adapters.openai_compatible import (
+    ResilientOpenAICompatible,
+    create_deepseek_adapter,
+    create_vllm_adapter,
+    create_ollama_adapter,
 )
 
 __version__ = "0.3.0"
@@ -50,22 +69,33 @@ __all__ = [
     "CircuitBreakerOpenError",
     "BulkheadFullError",
     "MaxRetriesExceededError",
+    "MidStreamInterruptedError",
     "HTTPStatusError",
     "TransientHTTPError",
     "PermanentHTTPError",
     "BaseRateLimiter",
     "TokenBucketLimiter",
     "SlidingWindowLimiter",
+    "RedisTokenBucketLimiter",
     "CircuitBreaker",
     "CircuitState",
     "RetryPolicy",
     "ExponentialBackoff",
     "BackoffStrategy",
     "Bulkhead",
+    "ResilientStream",
     "FlowGuard",
     "guard",
+    "guard_stream",
     "FallbackContext",
     "ChoiceFallback",
     "with_fallback_context",
     "MetricsCollector",
+    "OpenTelemetryExporter",
+    "GenAIMetrics",
+    "export_opentelemetry",
+    "ResilientOpenAICompatible",
+    "create_deepseek_adapter",
+    "create_vllm_adapter",
+    "create_ollama_adapter",
 ]

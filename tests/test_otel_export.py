@@ -86,6 +86,7 @@ class FakeTracer:
         return span
 
 
+@pytest.mark.skipif(not HAS_OTEL_SDK, reason="opentelemetry not installed in bare test environment")
 def test_opentelemetry_dynamic_import_success() -> None:
     """Verify dynamic import succeeds when opentelemetry is available."""
     assert is_opentelemetry_available() is True

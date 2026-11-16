@@ -48,7 +48,10 @@ class ResilientGemini:
                 "ResilientGemini requires an asynchronous client (e.g. client.aio.models.generate_content or client.generate_content_async). For synchronous models, use client.aio."
             )
 
-        self._client = client
+        if hasattr(client, "with_options"):
+            self._client = client.with_options(max_retries=0)
+        else:
+            self._client = client
         self.acquire_timeout = acquire_timeout
 
         rpm_burst = rpm_burst_capacity or max(1.0, min(float(rpm_limit), float(rpm_limit) / 5.0))

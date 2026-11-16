@@ -52,6 +52,20 @@ class MaxRetriesExceededError(FlowGuardError):
         self.last_exception = last_exception
 
 
+class MidStreamInterruptedError(FlowGuardError):
+    """Raised when an active stream fails or is interrupted after partial data has already been emitted."""
+
+    def __init__(
+        self,
+        message: str = "Stream interrupted after partial delivery",
+        chunks_delivered: int = 0,
+        cause: Optional[BaseException] = None,
+    ) -> None:
+        super().__init__(message)
+        self.chunks_delivered = chunks_delivered
+        self.cause = cause
+
+
 class HTTPStatusError(Exception):
     """Base exception for downstream HTTP response errors."""
 

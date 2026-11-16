@@ -80,3 +80,11 @@ class Bulkhead:
         async with self._lock:
             self._active_count = max(0, self._active_count - 1)
         self._semaphore.release()
+
+    async def acquire(self) -> None:
+        """Explicitly acquire a concurrency slot in the bulkhead."""
+        await self.__aenter__()
+
+    async def release(self) -> None:
+        """Explicitly release an acquired concurrency slot in the bulkhead."""
+        await self.__aexit__(None, None, None)

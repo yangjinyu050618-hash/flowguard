@@ -21,7 +21,14 @@ class MetricsCollector:
         }
         self.failure_by_type: Dict[str, int] = collections.defaultdict(int)
         self.latencies: List[float] = []
+        self.ttft_latencies: List[float] = []
         self._lock = threading.Lock()
+
+    def record_ttft(self, latency: float) -> None:
+        with self._lock:
+            self.ttft_latencies.append(latency)
+            if len(self.ttft_latencies) > 10000:
+                self.ttft_latencies = self.ttft_latencies[-5000:]
 
     def record_success(self, latency: float) -> None:
         with self._lock:
@@ -62,7 +69,7 @@ class MetricsCollector:
             p99 = sorted_lat[int(count * 0.99)] if count else 0.0
             avg = sum(sorted_lat) / count if count else 0.0
 
-            return {
+            summary: Dict[str, Any] = {
                 "name": self.name,
                 "total_requests": self.total_requests,
                 "success_count": self.success_count,
@@ -75,6 +82,15 @@ class MetricsCollector:
                 "latency_p99_ms": round(p99 * 1000, 2),
             }
 
+            if self.ttft_latencies:
+                sorted_ttft = sorted(self.ttft_latencies)
+                t_count = len(sorted_ttft)
+                summary["ttft_avg_ms"] = round(sum(sorted_ttft) / t_count * 1000, 2)
+                summary["ttft_p50_ms"] = round(sorted_ttft[int(t_count * 0.50)] * 1000, 2)
+                summary["ttft_p95_ms"] = round(sorted_ttft[int(t_count * 0.95)] * 1000, 2)
+
+            return summary
+
     def reset(self) -> None:
         with self._lock:
             self.total_requests = 0
@@ -84,3 +100,4 @@ class MetricsCollector:
                 self.rejected_count[k] = 0
             self.failure_by_type.clear()
             self.latencies.clear()
+            self.ttft_latencies.clear()

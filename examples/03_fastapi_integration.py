@@ -241,11 +241,11 @@ async def main() -> None:
         request_id="REQ-002",
         user_id="USR-102",
         prompt="Explain asyncio. (sim_fail)",
-        estimated_tokens=120,
+        estimated_tokens=80,
     )
     res2 = await gateway.handle_request(req2)
     print(
-        f"[{res2.status}] Routed: {res2.routed_model} (Total Budgeted across 2 primary retries + 1 fallback = {res2.total_tokens_budgeted} tokens) -> {res2.content}"
+        f"[{res2.status}] Routed: {res2.routed_model} (Total Budgeted: {res2.total_tokens_budgeted} tokens) -> {res2.content}"
     )
 
     print("\n--- 3. Handling Client Disconnect / Cancellation ---")

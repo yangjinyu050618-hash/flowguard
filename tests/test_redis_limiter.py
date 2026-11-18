@@ -319,12 +319,15 @@ async def test_acquire_timeout_sufficient_refill():
     )
 
     # Acquiring 2 tokens takes 0.02s. With timeout of 0.2s, should successfully wait and acquire
-    start = time.monotonic()
-    success = await limiter.acquire(tokens=2.0, timeout=0.2)
-    elapsed = time.monotonic() - start
+    with patch("flowguard.backends.redis.time") as clock:
+        clock.time.side_effect = [1.0, 1.03125]
+        clock.monotonic.return_value = 1.0
+        with patch("flowguard.backends.redis.asyncio.sleep") as sleep:
+            success = await limiter.acquire(tokens=2.0, timeout=0.2)
 
     assert success is True
-    assert elapsed >= 0.015
+    sleep.assert_awaited_once_with(pytest.approx(0.02))
+    assert len(fake_client.eval_calls) == 2
 
 
 # -----------------------------------------------------------------------------
@@ -508,13 +511,15 @@ async def test_mock_socket_network_exceptions():
 # 9. Self-Healing & Reconnect Recovery Tests
 # -----------------------------------------------------------------------------
 @pytest.mark.asyncio
-async def test_reconnect_recovery():
+@patch("flowguard.backends.redis.time", wraps=time)
+async def test_reconnect_recovery(clock):
+    clock.monotonic.return_value = 1.0
     fake_client = FakeRedisClient()
     limiter = RedisTokenBucketLimiter(
         rate=10.0,
         capacity=20.0,
         client=fake_client,
-        recovery_interval=0.05,
+        recovery_interval=1.0,
         on_redis_error="fallback_local",
     )
 
@@ -530,11 +535,16 @@ async def test_reconnect_recovery():
     # 3. Redis comes back online
     fake_client.should_fail = False
 
-    # Wait for recovery_interval (0.05s) to elapse
-    await asyncio.sleep(0.06)
+    calls_after_failure = len(fake_client.eval_calls)
+    clock.monotonic.return_value = 1.99
+    await limiter.acquire(1.0)
+    assert limiter.is_fallback_active
+    assert len(fake_client.eval_calls) == calls_after_failure
 
-    # 4. Next acquire re-probes Redis and recovers
+    # At the cooldown boundary the next acquire probes Redis exactly once.
+    clock.monotonic.return_value = 2.0
     await limiter.acquire(2.0)
+    assert len(fake_client.eval_calls) == calls_after_failure + 1
     assert limiter.is_fallback_active is False
 
 

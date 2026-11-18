@@ -30,7 +30,7 @@
 | Real-World LLM Headache | The Problem with Naive Solutions | How FlowGuard Solves It |
 | :--- | :--- | :--- |
 | **OpenAI / Claude 429 Rate Limiting** | Ad-hoc sleeps or standard RPM limiters ignore token volume, causing sudden TPM quota exhaustion and billing surprises. | **Dual RPM & TPM Token-Bucket**: Enforces strict FIFO token budgeting per attempt, preventing starvation and quota burnout. |
-| **Retry Storms & Duplicate Billing** | Wrapping official SDKs with Tenacity causes **2 SDK retries × 3 outer retries = 6 physical API calls** and 6x token bills. | **Sole Retry Ownership**: Automatically derives `max_retries=0` client copies; every physical attempt is accounted for and metered exactly once. |
+| **Overlapping retries** | With 2 SDK retries inside 3 outer retries, exhausting both policies can send up to 12 upstream calls: 3 SDK attempts per outer attempt, up to 4 outer attempts. | FlowGuard's OpenAI and Anthropic adapters disable SDK retries on their client copies and reserve quota for each attempt they dispatch. |
 | **Upstream 503 / 529 Outages** | Crashing or returning raw errors to end users when a high-tier model experiences an outage. | **Circuit Breakers & ChoiceFallback**: Probe-gated fast-fail trips `OPEN` and automatically routes requests to backup models (Claude/Gemini/DeepSeek) or human-in-the-loop decisions. |
 | **FastAPI Client Disconnects** | Cancelling streaming LLM requests leaves semaphore slots locked, rate limiter tokens permanently drained, or orphaned background tasks. | **Zero-Leak Slot Recovery**: `asyncio.CancelledError` unwinds waiting queues, bulkhead concurrency slots, and half-open probe gates immediately without task leaks. |
 
@@ -87,6 +87,22 @@ Incoming Task -> [ Retry Loop (outer) ]
 ```bash
 pip install flowguard-core
 ```
+
+**Try a simulated 503.** From the repository root, run the gateway example with Python.
+It runs locally without API keys or provider SDKs.
+
+```bash
+python examples/03_fastapi_integration.py
+```
+
+Two lines from its output:
+
+```text
+[SUCCESS] Routed: gpt-4o (Total Budgeted: 150 tokens) -> GPT-4o response to: 'Explain quantum computing.'
+[DEGRADED] Routed: claude-3.5-sonnet (Total Budgeted: 240 tokens) -> Claude 3.5 Sonnet fallback response to: 'Explain asyncio. (sim_fail)'
+```
+
+The second request reserves 80 tokens per attempt. The primary fails twice (initial call and one retry), then the fallback succeeds: **3 × 80 = 240 tokens reserved**. This counter tracks the gateway's rate-limit budget. Provider billing is separate.
 
 The core package has zero runtime dependencies. Install optional SDKs or gateway dependencies as needed:
 
